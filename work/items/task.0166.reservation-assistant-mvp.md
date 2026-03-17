@@ -1,14 +1,14 @@
 ---
 id: task.0166
 type: task
-title: Reservation Assistant MVP
-status: needs_merge
+title: Reservation Assistant V1 Demo
+status: needs_implement
 priority: 1
 rank: 1
 estimate: 4
-summary: Build a single-user personal reservation assistant that monitors hard-to-book restaurants via official platform alerts and assists with user-approved bookings.
-outcome: Working prototype with DB schema, Temporal workflow, provider adapter interfaces, one Resy implementation, and CRUD API — all following existing hexagonal architecture patterns.
-spec_refs:
+summary: "Build a single-user reservation assistant demo that ingests official Resy Notify emails, de-dupes and matches them against a watch window, and auto-attempts booking through the user's saved Resy session."
+outcome: "Single-user working demo: friend connects Gmail, connects Resy through a user-driven controlled browser login, creates a flexible watch window, system ingests and de-dupes Resy Notify emails, matches against intent window, auto-attempts claim with single-claim concurrency control, and immediately notifies him of success, failure, or reconnect-required state."
+spec_refs: reservation-assistant-v1
 assignees: claude
 credit:
 project:
@@ -30,107 +30,123 @@ external_refs:
 
 ### Outcome
 
-Enable a single user to create watch requests for hard-to-book restaurants, receive notifications when availability appears (via official platform alerts or manual ingestion), and optionally launch user-approved booking assistance through official channels.
+Deliver the smallest truthful demo that can actually help one friend get a hard reservation: connect Gmail, connect Resy, define a flexible watch window, ingest official Resy Notify emails, and immediately attempt the official booking flow using saved authenticated session state.
 
 ### Approach
 
-**Solution**: New `reservations` feature vertical following existing hexagonal patterns:
+**Solution**: Implement a narrow Resy-only demo loop:
 
-- 3 DB tables (`watch_requests`, `watch_events`, `booking_attempts`) in `packages/db-schema`
-- Port interfaces for reservation CRUD and provider abstraction
-- Temporal workflow: `ReservationWatchWorkflow` — create watch → wait for signal → notify user → optional booking assist
-- Provider adapter interface with Resy stub implementation (official notify path)
-- Contracts-first API for watch CRUD and event timeline
-- Playwright booking assist behind explicit user approval gate
+- Gmail OAuth + Gmail watch/push so Resy Notify emails arrive with low latency
+- User-driven Resy session capture in a controlled browser flow, with MFA/re-auth handled explicitly
+- App-owned watch window model: restaurant, party size, date range, time range, ideal time, hard constraints, soft constraints, `auto_claim`
+- Resy Notify email parser + matcher against active watches, with hard dedupe and idempotency
+- Short-lived Playwright claim executor that uses saved auth state only when a matching alert arrives
+- Activity log + immediate success/failure notification + reconnect flow when Gmail watch or Resy session expires
 
 **Reuses**:
 
 - `packages/db-schema` patterns (pgTable, enableRLS, timestamp conventions)
-- `services/scheduler-worker` Temporal activity/workflow patterns
-- Existing port/adapter/container DI wiring
 - Existing contract-first API route pattern
+- Existing auth/session patterns
 - Pino logging, shared observability
 
 **Rejected**:
 
-- **Scraping/polling approach**: Violates platform TOS; replaced by official alert ingestion + manual webhook/email paths
-- **AI agent orchestration**: Over-engineered for MVP; deterministic state machine via Temporal is simpler and auditable
-- **Separate microservice**: Unnecessary complexity; fits within existing scheduler-worker + web app architecture
-- **Generic multi-user platform**: Scope creep; single-user MVP validates the flow first
+- **Scraping/polling approach**: Violates platform TOS; replaced by official Resy Notify email ingestion
+- **Generic provider abstraction**: Premature for a one-friend demo; v1 is Resy only
+- **Manual per-attempt approval**: Too slow for the product goal; replaced by watch-level `auto_claim`
+- **Temporal-first orchestration**: Too much overhead before the Gmail-to-claim loop works end to end
+- **Manual ingestion as primary flow**: Not the product; keep only as debug fallback if needed
+- **OpenTable support in v1**: Scope creep before the first real provider works
 
 ### Invariants
 
 <!-- CODE REVIEW CRITERIA -->
 
 - [ ] NO_SCRAPING: Never scrape protected endpoints, bypass anti-bot, rotate accounts, or evade detection
-- [ ] USER_APPROVAL_GATE: Booking assist only launches after explicit user approval signal
-- [ ] OFFICIAL_CHANNELS_ONLY: All platform interactions go through official UX/API paths
-- [ ] TERMS_COMPLIANT: Playwright usage limited to user-authorized, terms-compliant browser assistance with stored authenticated session
-- [ ] AUDIT_TRAIL: Every state transition logged in `watch_events` with source attribution
-- [ ] DETERMINISTIC_FLOW: Temporal workflow is pure orchestration; all I/O in activities
+- [ ] OFFICIAL_ALERTS_ONLY: Alerts come from official Resy Notify emails, not inventory polling
+- [ ] WATCH_INTENT_CANONICAL: The app-owned watch window is the source of truth; provider alerts are signals only
+- [ ] AUTO_CLAIM_IS_EXPLICIT: Auto-claim must be enabled at the watch level; no implicit booking
+- [ ] NO_STANDING_BROWSER: Never keep a logged-in browser running indefinitely
+- [ ] SHORT_LIVED_EXECUTOR: Every claim attempt launches a fresh browser and exits promptly
+- [ ] ENCRYPTED_SESSION_STATE: Stored Resy auth state is encrypted at rest and never exposed to the browser app
+- [ ] REAUTH_IS_EXPLICIT: Expired Resy auth or Gmail watch state produces a clear reconnect flow
+- [ ] GMAIL_WATCH_RENEWAL_REQUIRED: Gmail watch renewals are first-class lifecycle work, not an implicit assumption
+- [ ] EMAIL_EVENT_DEDUP: Duplicate Gmail push events or duplicate email deliveries collapse to one logical alert
+- [ ] CLAIM_ATTEMPT_IDEMPOTENT: Retrying the same logical alert does not create duplicate claim attempts
+- [ ] ONE_ACTIVE_CLAIM_PER_WATCH: At most one active claim attempt may exist per watch
+- [ ] AUDIT_TRAIL: Every important transition is logged in the activity log with enough detail to debug the loop
+- [ ] IMMEDIATE_USER_NOTIFICATION: Success, failure, reconnect-required, and Gmail-watch-expired states notify the user immediately
+- [ ] NO_MULTI_ACCOUNT_ABUSE: One real user account only; no account farming, proxy rotation, evasion, or parallel claim spam
 - [ ] CONTRACT_FIRST: All API shapes defined in contracts using Zod
 - [ ] ARCHITECTURE_ALIGNMENT: Follows hexagonal layering (spec: architecture)
-- [ ] SIMPLE_SOLUTION: Leverages existing patterns/OSS over bespoke code
+- [ ] SIMPLE_SOLUTION: Optimize for the working Gmail-to-claim loop, not reusable scaffolding
 
 ### Files
 
 <!-- High-level scope -->
 
-- Create: `packages/db-schema/src/reservations.ts` — 3 tables (watch_requests, watch_events, booking_attempts)
+- Create/modify: `packages/db-schema/src/reservations.ts` — watch windows, activity log, connection/session state, dedupe/idempotency metadata
 - Modify: `packages/db-schema/src/index.ts` — re-export reservations schema
 - Modify: `packages/db-schema/package.json` — add reservations export
-- Create: `apps/web/src/ports/reservation.port.ts` — ReservationServicePort, ReservationProviderPort
-- Modify: `apps/web/src/ports/index.ts` — re-export reservation ports
-- Create: `apps/web/src/contracts/reservations.watch.v1.contract.ts` — watch CRUD contracts
-- Create: `apps/web/src/contracts/reservations.events.v1.contract.ts` — event timeline contract
-- Create: `apps/web/src/contracts/reservations.booking.v1.contract.ts` — booking attempt contract
-- Create: `apps/web/src/core/reservations/` — domain types, status enums, validation rules
-- Create: `apps/web/src/features/reservations/services/` — watch-manager, booking-assist orchestration
-- Create: `apps/web/src/adapters/server/reservations/` — Drizzle adapter, Resy provider stub
+- Create/modify: `apps/web/src/contracts/reservations.watch.v1.contract.ts` — canonical watch contracts
+- Create: `apps/web/src/contracts/reservations.connections.v1.contract.ts` — Gmail/Resy connection setup contracts
+- Create/modify: `apps/web/src/contracts/reservations.activity.v1.contract.ts` — activity log contract
+- Create/modify: `apps/web/src/core/reservations/` — window matching rules and domain types
+- Create/modify: `apps/web/src/features/reservations/services/` — watch management, Gmail ingestion orchestration, dedupe/concurrency control, auto-claim orchestration
+- Create/modify: `apps/web/src/adapters/server/reservations/` — encrypted Resy session handling and Playwright executor
+- Create: `apps/web/src/adapters/server/gmail/` — Gmail OAuth, watch registration, message fetch, parser helpers
 - Modify: `apps/web/src/bootstrap/container.ts` — wire reservation adapters
 - Create: `apps/web/src/app/api/v1/reservations/` — API routes
-- Create: `services/scheduler-worker/src/workflows/reservation-watch.workflow.ts` — Temporal workflow
-- Create: `services/scheduler-worker/src/activities/reservation.ts` — activities for notification + booking
-- Create: `docs/guides/reservation-assistant.md` — local dev instructions + risk notes
+- Create/modify: `apps/web/src/app/(app)/reservations/` — four-screen product flow
+- Modify: `docs/guides/reservation-assistant.md` — setup and operational guide for the real demo loop
 
 ## Requirements
 
-- 3 DB tables: `watch_requests`, `watch_events`, `booking_attempts` with proper schema
-- Provider adapter interface supporting Resy and OpenTable alert paths
-- Resy provider implementation (official notify integration path)
-- Notification ingestion from email/webhook/manual link
-- Temporal workflow: create → wait for signal → notify → optional booking assist
-- Booking assist uses Playwright only for user-approved, terms-compliant actions
-- API endpoints: create watch, pause/cancel watch, show event timeline, show attempts
-- Compliance guardrails enforced at every layer
-- Audit trail via `watch_events` table
+- Gmail OAuth + Gmail watch/push ingestion for Resy Notify emails
+- User-driven controlled-browser Resy login + encrypted saved Playwright session state
+- Window-based watch model owned by the app
+- Email parser + matcher from Resy Notify email to active watch
+- Dedupe for Gmail events and logical alerts
+- Idempotent claim attempts with one-active-claim-per-watch guard
+- Playwright claim executor using short-lived browser runs only
+- Immediate success/failure/reconnect-required notification
+- Reconnect flow when Gmail watch or Resy session expires
+- Gmail watch renewal handling when the Gmail subscription nears expiry
+- Contract-first routes for connections, watch CRUD, and activity log
+- Checked-in migration(s) for any reservation schema changes
+- Tests for parser, matcher, contracts, and core watch/claim paths
 
 ## Allowed Changes
 
 - `packages/db-schema/src/` — new schema file + barrel update
-- `apps/web/src/ports/` — new port file + barrel update
 - `apps/web/src/contracts/` — new contract files
 - `apps/web/src/core/reservations/` — new domain module
 - `apps/web/src/features/reservations/` — new feature vertical
+- `apps/web/src/adapters/server/gmail/` — Gmail integration for official alert ingestion
 - `apps/web/src/adapters/server/reservations/` — new adapter directory
 - `apps/web/src/bootstrap/container.ts` — DI wiring
-- `apps/web/src/app/api/v1/reservations/` — new API routes
-- `services/scheduler-worker/src/` — new workflow + activities
+- `apps/web/src/app/(app)/reservations/` — user-facing screens: Connections, Watches, Activity
+- `apps/web/src/app/api/v1/reservations/` — API routes
 - `docs/guides/` — dev instructions doc
 
 ## Plan
 
 - [x] Design (this document)
-- [ ] Create DB schema (`packages/db-schema/src/reservations.ts`)
-- [ ] Create core domain types (`apps/web/src/core/reservations/`)
-- [ ] Create port interfaces (`apps/web/src/ports/reservation.port.ts`)
-- [ ] Create API contracts (`apps/web/src/contracts/reservations.*.contract.ts`)
-- [ ] Create feature services (`apps/web/src/features/reservations/services/`)
-- [ ] Create adapters (Drizzle + Resy provider) (`apps/web/src/adapters/server/reservations/`)
+- [ ] Rewrite reservation schema around watch windows, activity log, and connection/session state
+- [ ] Add checked-in migration(s) for the reservation schema
+- [ ] Create core domain types + matching rules (`apps/web/src/core/reservations/`)
+- [ ] Create API contracts for connections, watch CRUD, and activity log
+- [ ] Create Gmail adapters and ingestion orchestration
+- [ ] Create Gmail watch renewal handling
+- [ ] Create Resy session capture + encrypted storageState handling + reconnect flow
+- [ ] Create Playwright auto-claim executor
+- [ ] Create dedupe/idempotency + one-active-claim-per-watch controls
+- [ ] Create feature services for watch management and alert-to-claim flow
 - [ ] Wire DI container (`apps/web/src/bootstrap/container.ts`)
 - [ ] Create API routes (`apps/web/src/app/api/v1/reservations/`)
-- [ ] Create Temporal workflow + activities
-- [ ] Add compliance guardrails doc
+- [ ] Build the user flow in `apps/web/src/app/(app)/reservations/` with Connections, Watches, and Activity
+- [ ] Update guide and setup docs for the real loop
 - [ ] Validate with `pnpm check`
 
 ## Validation
@@ -138,39 +154,35 @@ Enable a single user to create watch requests for hard-to-book restaurants, rece
 **Command:**
 
 ```bash
-pnpm typecheck && pnpm lint && pnpm format --check
+pnpm check
 ```
 
-**Expected:** All pass with no errors.
+**Expected:** Typecheck, lint, format, docs, and relevant tests pass.
 
 ## Review Checklist
 
 - [ ] **Work Item:** `task.0166` linked in PR body
-- [ ] **Spec:** all invariants upheld (NO_SCRAPING, USER_APPROVAL_GATE, OFFICIAL_CHANNELS_ONLY)
-- [ ] **Tests:** contract tests cover API shapes
+- [ ] **Spec:** all invariants upheld from `reservation-assistant-v1`
+- [ ] **Tests:** parser, matcher, dedupe/idempotency, contracts, and claim path covered
 - [ ] **Reviewer:** assigned and approved
 
 ## Review Feedback
 
-### Revision 1 — Blocking Issues
+### Revision 2 — Direction Change
 
-1. **Authorization (CRITICAL)**: All watch mutation/query operations (`updateWatchStatus`, `getWatchTimeline`, `getWatchBookings`, `ingestAlert`, `approveBooking`) lack ownership validation. Add `userId` param and verify `watch.userId === userId` before proceeding; return 403 on mismatch.
+1. **Wrong outcome**: CRUD API + provider abstraction + Temporal + Resy stub is scaffolding, not a functioning demo. The task must be rewritten around the real Gmail-to-claim loop.
 
-2. **Unsafe non-null assertions (HIGH)**: `drizzle-reservation-store.adapter.ts:129,181` — `updateWatchRequestStatus()` and `updateBookingAttemptStatus()` use `row!` after `.returning()`. If no row matches, `row` is undefined. Throw `WatchRequestNotFoundError` if empty.
+2. **Wrong approval model**: Per-attempt approval is too slow for the product goal. Auto-claim must be explicit at watch creation time.
 
-3. **Temporal workflow not registered (HIGH)**: `ReservationWatchWorkflow` defined but never added to worker's workflow bundle. Worker only loads `scheduled-run.workflow.js`.
+3. **Wrong abstraction level**: "Official notify integration path" is too vague. The product is explicitly Gmail-triggered Resy auto-claim using stored session state.
 
-4. **Missing error handling in workflow (HIGH)**: No try-catch around activity calls in `reservation-watch.workflow.ts:116-230`. Failed activities produce no audit events — violates AUDIT_TRAIL invariant.
+4. **Temporal too early**: Do not require workflow orchestration before Gmail ingestion and claim execution work end to end.
 
-5. **Activity error classification (HIGH)**: `reservation.ts:74-181` throws generic `Error` for all failures. Must use `ApplicationFailure.nonRetryable()` for 4xx client errors so Temporal doesn't retry them.
+5. **Missing setup flow**: The task must explicitly define Connect Gmail, Connect Resy, Create Watch, and reconnect handling as first-class deliverables.
 
-### Non-Blocking Suggestions
+6. **Missing dedupe and idempotency**: Duplicate Gmail events, duplicate emails, and duplicate claim retries must be treated as first-class design constraints.
 
-- Add contract tests for `ReservationStorePort` and `ReservationProviderPort`
-- Use narrower enum types in `core/reservations/model.ts` instead of `string`
-- Add correlation logging (workflowId, temporalRunId) to activities
-- Move signal handler registration to top of workflow before any async ops
-- Validate watch status before booking approval to prevent race conditions
+7. **Missing single-user abuse guardrails**: The demo must explicitly forbid account farming, proxy rotation, evasion, and parallel claim spam.
 
 ## PR / Links
 
