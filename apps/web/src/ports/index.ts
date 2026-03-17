@@ -136,15 +136,28 @@ export type {
 // Reservation ports
 export {
   type AlertSetupResult,
+  type AppendReservationEventParams,
   type BookingAssistParams,
   type BookingAssistResult,
   type BookingAttempt,
+  type CreateClaimAttemptParams,
   type CreateWatchRequestParams,
+  type GmailConnectResult,
+  type GmailIntegrationPort,
+  type GmailMessagePayload,
+  type GmailPushEvent,
+  type GmailWatchRenewalResult,
+  type RecordAlertReceiptParams,
+  type ReservationAlertReceipt,
+  type ReservationConnection,
   type ReservationProviderPort,
   type ReservationStorePort,
+  type SessionCaptureResult,
+  type UpsertReservationConnectionParams,
   type WatchEvent,
   type WatchRequest,
   WatchRequestNotFoundError,
+  type WatchRequestStatus,
 } from "./reservation.port";
 export type {
   ProxyBillingEntry,

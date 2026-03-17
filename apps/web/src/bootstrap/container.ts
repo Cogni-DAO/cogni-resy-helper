@@ -39,7 +39,6 @@ import {
   DrizzleExecutionGrantWorkerAdapter,
   DrizzleExecutionRequestAdapter,
   DrizzleGovernanceStatusAdapter,
-  DrizzleReservationStoreAdapter,
   DrizzleScheduleRunAdapter,
   DrizzleScheduleUserAdapter,
   DrizzleThreadPersistenceAdapter,
@@ -51,7 +50,6 @@ import {
   LiteLlmAdapter,
   type MimirAdapterConfig,
   MimirMetricsAdapter,
-  ResyProviderAdapter,
   SystemClock,
   TemporalScheduleControlAdapter,
   UserDrizzleAccountService,
@@ -61,7 +59,10 @@ import {
 } from "@/adapters/server";
 import { ServiceDrizzleAccountService } from "@/adapters/server/accounts/drizzle.adapter";
 import { getServiceDb } from "@/adapters/server/db/drizzle.service-client";
+import { GmailAdapter } from "@/adapters/server/gmail/gmail.adapter";
 import { ServiceDrizzlePaymentAttemptRepository } from "@/adapters/server/payments/drizzle-payment-attempt.adapter";
+import { DrizzleReservationStoreAdapter } from "@/adapters/server/reservations/drizzle-reservation-store.adapter";
+import { ResyProviderAdapter } from "@/adapters/server/reservations/resy-provider.adapter";
 import { OpenRouterFundingAdapter } from "@/adapters/server/treasury/openrouter-funding.adapter";
 import { SplitTreasurySettlementAdapter } from "@/adapters/server/treasury/split-treasury-settlement.adapter";
 import {
@@ -84,6 +85,7 @@ import type {
   AiTelemetryPort,
   Clock,
   DataSourceRegistration,
+  GmailIntegrationPort,
   GovernanceStatusPort,
   LangfusePort,
   LlmService,
@@ -183,8 +185,10 @@ export interface Container {
   providerFunding: ProviderFundingPort | undefined;
   /** Reservation store — watch requests, events, booking attempts */
   reservationStore: ReservationStorePort;
-  /** Reservation providers — platform-specific adapters (resy, opentable, etc.) */
-  reservationProviders: Map<string, ReservationProviderPort>;
+  /** Gmail integration for official alert ingestion */
+  reservationGmail: GmailIntegrationPort;
+  /** Resy executor for notify setup and claim attempts */
+  reservationProvider: ReservationProviderPort;
 }
 
 // Feature-specific dependency types
@@ -584,9 +588,8 @@ function createContainer(): Container {
       : undefined,
     providerFunding,
     reservationStore: new DrizzleReservationStoreAdapter(db),
-    reservationProviders: new Map<string, ReservationProviderPort>([
-      ["resy", new ResyProviderAdapter()],
-    ]),
+    reservationGmail: new GmailAdapter(),
+    reservationProvider: new ResyProviderAdapter(),
   };
 }
 

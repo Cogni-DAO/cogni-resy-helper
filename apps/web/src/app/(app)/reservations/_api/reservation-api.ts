@@ -1,23 +1,17 @@
 // SPDX-License-Identifier: LicenseRef-PolyForm-Shield-1.0.0
 // SPDX-FileCopyrightText: 2025 Cogni-DAO
 
-/**
- * Module: `@app/(app)/reservations/_api/reservation-api`
- * Purpose: Client-side fetch wrappers for reservation API endpoints.
- * Scope: Type-safe fetch helpers for watches, events, bookings, and alert ingestion.
- * Invariants: Returns typed contract responses or throws
- * Side-effects: IO
- * Links: @contracts/reservations.*.v1.contract
- * @internal
- */
+"use client";
 
 import type { z } from "zod";
-import type { bookingListOperation } from "@/contracts/reservations.booking.v1.contract";
-import type { eventsListOperation } from "@/contracts/reservations.events.v1.contract";
+
+import type { reservationActivityListOperation } from "@/contracts/reservations.activity.v1.contract";
 import type {
-  IngestAlertInput,
-  ingestAlertOperation,
-} from "@/contracts/reservations.ingest.v1.contract";
+  gmailConnectStartOperation,
+  gmailRenewOperation,
+  reservationsConnectionsReadOperation,
+  resyCaptureOperation,
+} from "@/contracts/reservations.connections.v1.contract";
 import type {
   WatchCreateInput,
   WatchStatusUpdateInput,
@@ -25,11 +19,15 @@ import type {
   watchListOperation,
 } from "@/contracts/reservations.watch.v1.contract";
 
+type ConnectionsResponse = z.infer<
+  typeof reservationsConnectionsReadOperation.output
+>;
+type GmailStartResponse = z.infer<typeof gmailConnectStartOperation.output>;
+type GmailRenewResponse = z.infer<typeof gmailRenewOperation.output>;
+type ResyCaptureResponse = z.infer<typeof resyCaptureOperation.output>;
 type WatchResponse = z.infer<typeof watchCreateOperation.output>;
 type WatchListResponse = z.infer<typeof watchListOperation.output>;
-type EventListResponse = z.infer<typeof eventsListOperation.output>;
-type BookingListResponse = z.infer<typeof bookingListOperation.output>;
-type IngestResponse = z.infer<typeof ingestAlertOperation.output>;
+type ActivityResponse = z.infer<typeof reservationActivityListOperation.output>;
 
 async function apiFetch<T>(url: string, init?: RequestInit): Promise<T> {
   const response = await fetch(url, {
@@ -44,6 +42,33 @@ async function apiFetch<T>(url: string, init?: RequestInit): Promise<T> {
     throw new Error(body.error || `HTTP ${response.status}`);
   }
   return response.json();
+}
+
+export function fetchConnections(): Promise<ConnectionsResponse> {
+  return apiFetch("/api/v1/reservations/connections");
+}
+
+export function startGmailConnection(): Promise<GmailStartResponse> {
+  return apiFetch("/api/v1/reservations/connections/gmail/start", {
+    method: "POST",
+    body: JSON.stringify({}),
+  });
+}
+
+export function renewGmailWatch(): Promise<GmailRenewResponse> {
+  return apiFetch("/api/v1/reservations/connections/gmail/renew", {
+    method: "POST",
+    body: JSON.stringify({}),
+  });
+}
+
+export function captureResyConnection(
+  startUrl?: string
+): Promise<ResyCaptureResponse> {
+  return apiFetch("/api/v1/reservations/connections/resy/capture", {
+    method: "POST",
+    body: JSON.stringify(startUrl ? { startUrl } : {}),
+  });
 }
 
 export function fetchWatches(): Promise<WatchListResponse> {
@@ -67,17 +92,9 @@ export function updateWatchStatus(
   });
 }
 
-export function fetchEvents(watchId: string): Promise<EventListResponse> {
-  return apiFetch(`/api/v1/reservations/watches/${watchId}/events`);
-}
-
-export function fetchBookings(watchId: string): Promise<BookingListResponse> {
-  return apiFetch(`/api/v1/reservations/watches/${watchId}/bookings`);
-}
-
-export function ingestAlert(input: IngestAlertInput): Promise<IngestResponse> {
-  return apiFetch("/api/v1/reservations/ingest", {
-    method: "POST",
-    body: JSON.stringify(input),
-  });
+export function fetchActivity(watchId?: string): Promise<ActivityResponse> {
+  const url = watchId
+    ? `/api/v1/reservations/activity?watchId=${encodeURIComponent(watchId)}`
+    : "/api/v1/reservations/activity?limit=50";
+  return apiFetch(url);
 }

@@ -106,6 +106,11 @@ export const serverSchema = z.object({
   // NextAuth secret (required for JWT signing)
   AUTH_SECRET: z.string().min(32),
 
+  // Reservation assistant integrations - optional until the feature is enabled.
+  GOOGLE_OAUTH_CLIENT_ID: optionalString,
+  GOOGLE_OAUTH_CLIENT_SECRET: optionalString,
+  GMAIL_PUBSUB_TOPIC: optionalString,
+
   // Optional
   PORT: z.coerce.number().default(3000),
   PINO_LOG_LEVEL: z

@@ -133,20 +133,20 @@ Deliver the smallest truthful demo that can actually help one friend get a hard 
 ## Plan
 
 - [x] Design (this document)
-- [ ] Rewrite reservation schema around watch windows, activity log, and connection/session state
-- [ ] Add checked-in migration(s) for the reservation schema
-- [ ] Create core domain types + matching rules (`apps/web/src/core/reservations/`)
-- [ ] Create API contracts for connections, watch CRUD, and activity log
-- [ ] Create Gmail adapters and ingestion orchestration
-- [ ] Create Gmail watch renewal handling
-- [ ] Create Resy session capture + encrypted storageState handling + reconnect flow
-- [ ] Create Playwright auto-claim executor
-- [ ] Create dedupe/idempotency + one-active-claim-per-watch controls
-- [ ] Create feature services for watch management and alert-to-claim flow
-- [ ] Wire DI container (`apps/web/src/bootstrap/container.ts`)
-- [ ] Create API routes (`apps/web/src/app/api/v1/reservations/`)
-- [ ] Build the user flow in `apps/web/src/app/(app)/reservations/` with Connections, Watches, and Activity
-- [ ] Update guide and setup docs for the real loop
+- [x] Rewrite reservation schema around watch windows, activity log, and connection/session state
+- [x] Add checked-in migration(s) for the reservation schema
+- [x] Create core domain types + matching rules (`apps/web/src/core/reservations/`)
+- [x] Create API contracts for connections, watch CRUD, and activity log
+- [x] Create Gmail adapters and ingestion orchestration
+- [x] Create Gmail watch renewal handling
+- [x] Create Resy session capture + encrypted storageState handling + reconnect flow
+- [x] Create Playwright auto-claim executor
+- [x] Create dedupe/idempotency + one-active-claim-per-watch controls
+- [x] Create feature services for watch management and alert-to-claim flow
+- [x] Wire DI container (`apps/web/src/bootstrap/container.ts`)
+- [x] Create API routes (`apps/web/src/app/api/v1/reservations/`)
+- [x] Build the user flow in `apps/web/src/app/(app)/reservations/` with Connections, Watches, and Activity
+- [x] Update guide and setup docs for the real loop
 - [ ] Validate with `pnpm check`
 
 ## Validation

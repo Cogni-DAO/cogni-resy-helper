@@ -1,18 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-PolyForm-Shield-1.0.0
 // SPDX-FileCopyrightText: 2025 Cogni-DAO
 
-/**
- * Module: `@app/api/v1/reservations/watches`
- * Purpose: HTTP endpoints for watch request collection (create, list).
- * Scope: Auth-protected POST/GET endpoints for reservation watch management.
- * Invariants:
- * - Watch ownership scoped to authenticated user
- * - AUDIT_TRAIL: creation recorded as watch_event
- * Side-effects: IO (HTTP request/response, database)
- * Links: task.0166, reservations.watch.v1.contract
- * @public
- */
-
 import { NextResponse } from "next/server";
 
 import { getSessionUser } from "@/app/_lib/auth/session";
@@ -30,39 +18,30 @@ import {
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
-function toWireFormat(watch: {
-  id: string;
-  userId: string;
-  platform: string;
-  venue: string;
-  partySize: string;
-  dateStart: Date;
-  dateEnd: Date;
-  preferredTimeStart: string | null;
-  preferredTimeEnd: string | null;
-  status: string;
-  createdAt: Date;
-  updatedAt: Date;
-}) {
+function toWireFormat(watch: Awaited<ReturnType<typeof createWatch>>) {
   return {
     id: watch.id,
     userId: watch.userId,
     platform: watch.platform,
-    venue: watch.venue,
+    restaurant: watch.restaurant,
+    restaurantSlug: watch.restaurantSlug,
     partySize: watch.partySize,
     dateStart: watch.dateStart.toISOString(),
     dateEnd: watch.dateEnd.toISOString(),
-    preferredTimeStart: watch.preferredTimeStart,
-    preferredTimeEnd: watch.preferredTimeEnd,
+    timeStart: watch.timeStart,
+    timeEnd: watch.timeEnd,
+    idealTime: watch.idealTime,
+    hardConstraints: watch.hardConstraints,
+    softConstraints: watch.softConstraints,
+    autoClaim: watch.autoClaim,
+    notifySetupUrl: watch.notifySetupUrl,
     status: watch.status,
+    lastMatchedAt: watch.lastMatchedAt?.toISOString() ?? null,
     createdAt: watch.createdAt.toISOString(),
     updatedAt: watch.updatedAt.toISOString(),
   };
 }
 
-/**
- * POST /api/v1/reservations/watches - Create a new watch request.
- */
 export const POST = wrapRouteHandlerWithLogging(
   {
     routeId: "reservations.watches.create",
@@ -77,38 +56,40 @@ export const POST = wrapRouteHandlerWithLogging(
     }
 
     const input = watchCreateOperation.input.parse(body);
-    if (!sessionUser) throw new Error("sessionUser required");
+    if (!sessionUser) {
+      throw new Error("sessionUser required");
+    }
 
     const container = getContainer();
     const watch = await createWatch(sessionUser.id, input, {
       store: container.reservationStore,
-      providers: container.reservationProviders,
+      provider: container.reservationProvider,
     });
 
     return NextResponse.json(toWireFormat(watch), { status: 201 });
   }
 );
 
-/**
- * GET /api/v1/reservations/watches - List watch requests for current user.
- */
 export const GET = wrapRouteHandlerWithLogging(
   {
     routeId: "reservations.watches.list",
     auth: { mode: "required", getSessionUser },
   },
   async (_ctx, _request, sessionUser) => {
-    if (!sessionUser) throw new Error("sessionUser required");
+    if (!sessionUser) {
+      throw new Error("sessionUser required");
+    }
 
     const container = getContainer();
     const watches = await listWatches(sessionUser.id, {
       store: container.reservationStore,
-      providers: container.reservationProviders,
+      provider: container.reservationProvider,
     });
 
-    const output = watchListOperation.output.parse({
-      watches: watches.map(toWireFormat),
-    });
-    return NextResponse.json(output);
+    return NextResponse.json(
+      watchListOperation.output.parse({
+        watches: watches.map(toWireFormat),
+      })
+    );
   }
 );

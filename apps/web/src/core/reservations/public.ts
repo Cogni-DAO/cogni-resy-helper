@@ -3,8 +3,8 @@
 
 /**
  * Module: `@core/reservations/public`
- * Purpose: Public entry point for reservation domain types and rules.
- * Scope: Re-exports only. No logic here.
+ * Purpose: Public entry point for reservation domain logic.
+ * Scope: Re-exports only.
  * Side-effects: none
  * @public
  */
@@ -12,6 +12,13 @@
 export type {
   BookingAttempt,
   BookingAttemptStatus,
+  GmailRenewalStatus,
+  GmailWatchStatus,
+  ReservationAlert,
+  ReservationAlertReceipt,
+  ReservationConnection,
+  ReservationConnectionStatus,
+  ReservationConnectionType,
   ReservationPlatform,
   WatchEvent,
   WatchEventSource,
@@ -19,12 +26,20 @@ export type {
   WatchRequest,
   WatchRequestStatus,
 } from "./model";
+export type { ParseResyNotifyEmailInput } from "./parser";
+export { parseResyNotifyEmail } from "./parser";
 export {
   assertValidDateRange,
   assertValidPartySize,
+  assertValidTimeWindow,
+  buildLogicalAlertKey,
   InvalidDateRangeError,
   InvalidPartySizeError,
   InvalidStatusTransitionError,
+  InvalidTimeWindowError,
   isValidStatusTransition,
   isWatchable,
+  matchesWatch,
+  normalizeRestaurantName,
+  timeStringToMinutes,
 } from "./rules";

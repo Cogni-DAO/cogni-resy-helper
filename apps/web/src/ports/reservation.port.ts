@@ -3,21 +3,17 @@
 
 /**
  * Module: `@ports/reservation.port`
- * Purpose: Port interfaces for the reservation assistant feature.
- * Scope: Defines ReservationStorePort (persistence) and ReservationProviderPort (platform integration).
- * Invariants:
- * - USER_APPROVAL_GATE: createBookingAttempt only called after explicit user approval
- * - OFFICIAL_CHANNELS_ONLY: providers must use official platform APIs/UX
- * - NO_SCRAPING: providers must never scrape or bypass anti-bot protections
- * - AUDIT_TRAIL: every action produces a watch_event record
- * Side-effects: none (interface only)
- * Links: task.0166, @core/reservations
+ * Purpose: Ports for the reservation assistant feature.
+ * Scope: Interfaces only.
+ * Side-effects: none
  * @public
  */
 
 import type {
   BookingAttempt,
   BookingAttemptStatus,
+  ReservationAlertReceipt,
+  ReservationConnection,
   WatchEvent,
   WatchEventSource,
   WatchEventType,
@@ -25,10 +21,18 @@ import type {
   WatchRequestStatus,
 } from "@/core";
 
-// Re-exported for adapter access (adapters can only import from @/ports)
-export type { BookingAttempt, WatchEvent, WatchRequest } from "@/core";
-
-/* ─── Port Errors ─────────────────────────────────────────────────── */
+export type {
+  BookingAttempt,
+  BookingAttemptStatus,
+  ReservationAlertReceipt,
+  ReservationConnection,
+  ReservationConnectionStatus,
+  WatchEvent,
+  WatchEventSource,
+  WatchEventType,
+  WatchRequest,
+  WatchRequestStatus,
+} from "@/core";
 
 export class WatchRequestNotFoundError extends Error {
   constructor(public readonly id: string) {
@@ -37,97 +41,227 @@ export class WatchRequestNotFoundError extends Error {
   }
 }
 
-/* ─── Store Port (Persistence) ────────────────────────────────────── */
-
 export interface CreateWatchRequestParams {
   userId: string;
-  platform: string;
-  venue: string;
-  partySize: string;
+  restaurant: string;
+  restaurantSlug?: string | undefined;
+  partySize: number;
   dateStart: Date;
   dateEnd: Date;
-  preferredTimeStart?: string | undefined;
-  preferredTimeEnd?: string | undefined;
+  timeStart: string;
+  timeEnd: string;
+  idealTime?: string | undefined;
+  hardConstraints?: Record<string, unknown> | undefined;
+  softConstraints?: Record<string, unknown> | undefined;
+  autoClaim: boolean;
+  notifySetupUrl?: string | undefined;
+}
+
+export interface UpsertReservationConnectionParams {
+  userId: string;
+  connectionType: "gmail" | "resy";
+  status:
+    | "disconnected"
+    | "pending"
+    | "connected"
+    | "expired"
+    | "reconnect_required"
+    | "error";
+  provider: string;
+  providerAccountEmail?: string | null | undefined;
+  providerSubject?: string | null | undefined;
+  accessTokenCiphertext?: string | null | undefined;
+  refreshTokenCiphertext?: string | null | undefined;
+  tokenExpiresAt?: Date | null | undefined;
+  sessionStateCiphertext?: string | null | undefined;
+  sessionStatus?:
+    | "disconnected"
+    | "pending"
+    | "connected"
+    | "expired"
+    | "reconnect_required"
+    | "error"
+    | null
+    | undefined;
+  lastVerifiedAt?: Date | null | undefined;
+  expiresHintAt?: Date | null | undefined;
+  historyCursor?: string | null | undefined;
+  watchStatus?: "inactive" | "active" | "expired" | "error" | undefined;
+  watchExpiryAt?: Date | null | undefined;
+  renewalStatus?:
+    | "healthy"
+    | "due"
+    | "expired"
+    | "reconnect_required"
+    | undefined;
+  metadataJson?: Record<string, unknown> | null | undefined;
+}
+
+export interface AppendReservationEventParams {
+  userId: string;
+  watchRequestId?: string | null | undefined;
+  connectionId?: string | null | undefined;
+  alertReceiptId?: string | null | undefined;
+  source: WatchEventSource;
+  eventType: WatchEventType;
+  dedupeKey?: string | null | undefined;
+  payloadJson?: Record<string, unknown> | null | undefined;
+}
+
+export interface RecordAlertReceiptParams {
+  userId: string;
+  connectionId?: string | null | undefined;
+  gmailMessageId?: string | null | undefined;
+  gmailThreadId?: string | null | undefined;
+  gmailHistoryId?: string | null | undefined;
+  gmailDedupKey: string;
+  logicalAlertKey: string;
+  restaurant: string;
+  partySize: number;
+  slotAt: Date;
+  bookingUrl?: string | null | undefined;
+  payloadJson?: Record<string, unknown> | null | undefined;
+}
+
+export interface CreateClaimAttemptParams {
+  watchRequestId: string;
+  alertReceiptId: string;
+  dedupeKey: string;
 }
 
 export interface ReservationStorePort {
+  listConnections(userId: string): Promise<ReservationConnection[]>;
+  getConnectionByType(
+    userId: string,
+    connectionType: "gmail" | "resy"
+  ): Promise<ReservationConnection | null>;
+  getGmailConnectionByEmail(
+    providerAccountEmail: string
+  ): Promise<ReservationConnection | null>;
+  upsertConnection(
+    params: UpsertReservationConnectionParams
+  ): Promise<ReservationConnection>;
+
   createWatchRequest(params: CreateWatchRequestParams): Promise<WatchRequest>;
   getWatchRequest(id: string): Promise<WatchRequest | null>;
   listWatchRequests(userId: string): Promise<WatchRequest[]>;
+  listActiveWatchRequests(userId: string): Promise<WatchRequest[]>;
   updateWatchRequestStatus(
     id: string,
     status: WatchRequestStatus
   ): Promise<WatchRequest>;
+  touchWatchLastMatchedAt(id: string, matchedAt: Date): Promise<void>;
 
-  appendEvent(params: {
-    watchRequestId: string;
-    source: WatchEventSource;
-    eventType: WatchEventType;
-    payloadJson?: Record<string, unknown> | undefined;
-  }): Promise<WatchEvent>;
-  listEvents(watchRequestId: string): Promise<WatchEvent[]>;
+  appendEvent(params: AppendReservationEventParams): Promise<WatchEvent>;
+  listEvents(userId: string, watchId?: string): Promise<WatchEvent[]>;
 
-  createBookingAttempt(watchRequestId: string): Promise<BookingAttempt>;
+  recordAlertReceipt(params: RecordAlertReceiptParams): Promise<{
+    created: boolean;
+    receipt: ReservationAlertReceipt;
+  }>;
+  attachAlertToWatch(
+    alertReceiptId: string,
+    watchRequestId: string
+  ): Promise<void>;
+
+  createClaimAttempt(
+    params: CreateClaimAttemptParams
+  ): Promise<BookingAttempt | null>;
   updateBookingAttemptStatus(
     id: string,
     status: BookingAttemptStatus,
-    details?: Record<string, unknown>
+    resultJson?: Record<string, unknown> | null | undefined
   ): Promise<BookingAttempt>;
   listBookingAttempts(watchRequestId: string): Promise<BookingAttempt[]>;
 }
 
-/* ─── Provider Port (Platform Integration) ────────────────────────── */
+export interface GmailMessagePayload {
+  id: string;
+  threadId: string | null;
+  historyId: string | null;
+  from: string | null;
+  subject: string;
+  textBody: string;
+  htmlBody: string | null;
+}
 
-/**
- * ReservationProviderPort — abstraction for restaurant reservation platforms.
- *
- * COMPLIANCE GUARDRAILS:
- * - Implementations MUST use only official platform APIs or user-directed UX
- * - Implementations MUST NOT scrape, bypass captchas, rotate accounts, or evade detection
- * - Booking assist MUST only occur with stored, user-provided authenticated sessions
- * - All actions MUST be logged via watch_events for auditability
- */
-export interface ReservationProviderPort {
-  /** Platform identifier (e.g., "resy", "opentable") */
-  readonly platformId: string;
+export interface GmailConnectResult {
+  providerAccountEmail: string;
+  providerSubject: string;
+  accessTokenCiphertext: string;
+  refreshTokenCiphertext: string | null;
+  tokenExpiresAt: Date | null;
+  historyCursor: string;
+  watchExpiryAt: Date | null;
+  watchStatus: "active" | "inactive" | "expired" | "error";
+  renewalStatus: "healthy" | "due" | "expired" | "reconnect_required";
+}
 
-  /**
-   * Set up an alert/notification for the given watch request.
-   * Uses the platform's official notification mechanism.
-   * Returns instructions for the user if manual setup is needed.
-   */
-  setupAlert(watch: WatchRequest): Promise<AlertSetupResult>;
+export interface GmailWatchRenewalResult {
+  historyCursor: string;
+  watchExpiryAt: Date | null;
+  watchStatus: "active" | "inactive" | "expired" | "error";
+  renewalStatus: "healthy" | "due" | "expired" | "reconnect_required";
+}
 
-  /**
-   * Attempt to book a reservation on behalf of the user.
-   * Only called after explicit user approval.
-   * Uses Playwright with stored authenticated session state.
-   *
-   * INVARIANT: USER_APPROVAL_GATE — caller must verify approval before invoking.
-   */
-  attemptBooking(params: BookingAssistParams): Promise<BookingAssistResult>;
+export interface GmailPushEvent {
+  providerAccountEmail: string;
+  historyId: string;
+}
+
+export interface GmailIntegrationPort {
+  createAuthorizationUrl(params: {
+    userId: string;
+    redirectUri: string;
+  }): string;
+  exchangeAuthorizationCode(params: {
+    code: string;
+    redirectUri: string;
+  }): Promise<GmailConnectResult>;
+  renewWatch(params: {
+    refreshTokenCiphertext: string;
+  }): Promise<GmailWatchRenewalResult>;
+  fetchResyNotifyMessages(params: {
+    accessTokenCiphertext: string;
+    refreshTokenCiphertext?: string | null | undefined;
+    historyCursor: string;
+  }): Promise<{
+    nextHistoryCursor: string;
+    messages: GmailMessagePayload[];
+  }>;
 }
 
 export interface AlertSetupResult {
-  success: boolean;
-  /** Instructions for the user if manual steps are needed */
-  userInstructions?: string | undefined;
-  /** URL the user should visit to complete alert setup */
-  setupUrl?: string | undefined;
+  setupUrl: string;
 }
 
 export interface BookingAssistParams {
   watch: WatchRequest;
-  /** Path to stored browser session state (cookies, localStorage) */
-  sessionStatePath: string;
-  /** The specific availability slot to attempt */
-  targetSlot?: { date: string; time: string } | undefined;
+  alert: ReservationAlertReceipt;
+  sessionStateCiphertext: string;
 }
 
 export interface BookingAssistResult {
   success: boolean;
+  reconnectRequired?: boolean | undefined;
   confirmationCode?: string | undefined;
-  /** Path to screenshot for debugging/audit */
-  screenshotPath?: string | undefined;
   error?: string | undefined;
+  details?: Record<string, unknown> | undefined;
+}
+
+export interface SessionCaptureResult {
+  providerAccountEmail?: string | null | undefined;
+  sessionStateCiphertext: string;
+  sessionStatus: "connected" | "expired" | "reconnect_required" | "error";
+  lastVerifiedAt: Date | null;
+  expiresHintAt: Date | null;
+}
+
+export interface ReservationProviderPort {
+  readonly platformId: "resy";
+  buildNotifySetup(watch: WatchRequest): AlertSetupResult;
+  captureSession(params?: {
+    startUrl?: string | undefined;
+  }): Promise<SessionCaptureResult>;
+  attemptBooking(params: BookingAssistParams): Promise<BookingAssistResult>;
 }
