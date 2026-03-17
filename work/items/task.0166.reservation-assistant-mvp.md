@@ -13,7 +13,7 @@ assignees: claude
 credit:
 project:
 branch: claude/reservation-assistant-mvp-Sy4le
-pr:
+pr: https://github.com/Cogni-DAO/cogni-resy-helper/pull/1
 reviewer:
 revision: 1
 blocked_by:
