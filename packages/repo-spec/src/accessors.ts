@@ -11,7 +11,7 @@
  * @public
  */
 
-import type { GateConfig, RepoSpec } from "./schema.js";
+import type { GateConfig, OperatorWalletSpec, RepoSpec } from "./schema.js";
 
 // ---------------------------------------------------------------------------
 // Accessor result types
@@ -108,7 +108,9 @@ export function extractChainId(spec: RepoSpec): number {
 export function extractPaymentConfig(
   spec: RepoSpec,
   expectedChainId: number
-): InboundPaymentConfig {
+): InboundPaymentConfig | undefined {
+  if (!spec.payments_in?.credits_topup) return undefined;
+
   const chainId = extractChainId(spec);
 
   if (chainId !== expectedChainId) {
@@ -247,4 +249,22 @@ export function extractDaoConfig(spec: RepoSpec): DaoConfig | null {
     chain_id: String(dao.chain_id),
     base_url: dao.base_url,
   };
+}
+
+/**
+ * Extract operator wallet config from repo-spec.
+ * Returns undefined if operator_wallet section is not present.
+ */
+export function extractOperatorWalletConfig(
+  spec: RepoSpec
+): OperatorWalletSpec | undefined {
+  return spec.operator_wallet;
+}
+
+/**
+ * Extract DAO treasury address from repo-spec.
+ * Returns undefined if cogni_dao.dao_contract is not present.
+ */
+export function extractDaoTreasuryAddress(spec: RepoSpec): string | undefined {
+  return spec.cogni_dao.dao_contract;
 }

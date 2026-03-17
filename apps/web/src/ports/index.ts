@@ -109,6 +109,10 @@ export type {
   VerificationResult,
   VerificationStatus,
 } from "./onchain-verifier.port";
+export type {
+  OperatorWalletPort,
+  TransferIntent,
+} from "./operator-wallet.port";
 export {
   type CreatePaymentAttemptParams,
   isPaymentAttemptNotFoundPortError,
@@ -124,6 +128,24 @@ export {
   type PaymentErrorCode,
   TxHashAlreadyBoundPortError,
 } from "./payment-attempt.port";
+export type {
+  ProviderFundingContext,
+  ProviderFundingOutcome,
+  ProviderFundingPort,
+} from "./provider-funding.port";
+// Reservation ports
+export {
+  type AlertSetupResult,
+  type BookingAssistParams,
+  type BookingAssistResult,
+  type BookingAttempt,
+  type CreateWatchRequestParams,
+  type ReservationProviderPort,
+  type ReservationStorePort,
+  type WatchEvent,
+  type WatchRequest,
+  WatchRequestNotFoundError,
+} from "./reservation.port";
 export type {
   ProxyBillingEntry,
   SandboxErrorCode,
@@ -164,3 +186,7 @@ export type {
   TreasuryReadPort,
   TreasurySnapshot,
 } from "./treasury-read.port";
+export type {
+  TreasurySettlementOutcome,
+  TreasurySettlementPort,
+} from "./treasury-settlement.port";

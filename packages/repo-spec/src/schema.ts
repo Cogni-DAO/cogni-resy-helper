@@ -128,6 +128,24 @@ export const activityLedgerSpecSchema = z.object({
 
 export type ActivityLedgerSpec = z.infer<typeof activityLedgerSpecSchema>;
 
+/**
+ * Schema for operator_wallet configuration.
+ * Privy-managed operator wallet address — governance-in-git.
+ * The Split contract address lives in payments_in.credits_topup.receiving_address
+ * (single source of truth for where user payments land).
+ */
+export const operatorWalletSpecSchema = z.object({
+  /** Checksummed EVM address of the Privy-managed operator wallet */
+  address: z
+    .string()
+    .regex(
+      /^0x[a-fA-F0-9]{40}$/,
+      "Operator wallet address must be a valid EVM address (0x + 40 hex chars)"
+    ),
+});
+
+export type OperatorWalletSpec = z.infer<typeof operatorWalletSpecSchema>;
+
 // ---------------------------------------------------------------------------
 // Gate + rule schemas (PR review)
 // ---------------------------------------------------------------------------
@@ -249,6 +267,9 @@ export const repoSpecSchema = z
     /** Activity ledger configuration (optional — needed only when LEDGER_INGEST is enabled) */
     activity_ledger: activityLedgerSpecSchema.optional(),
 
+    /** Operator wallet configuration (optional — needed only when operator wallet is enabled) */
+    operator_wallet: operatorWalletSpecSchema.optional(),
+
     /** DAO governance configuration */
     cogni_dao: z.object({
       /**
@@ -275,11 +296,20 @@ export const repoSpecSchema = z
       base_url: z.string().url().optional(),
     }),
 
-    /** Payment configuration (required) */
-    payments_in: z.object({
-      /** Inbound payment configuration for USDC credits top-up (required) */
-      credits_topup: creditsTopupSpecSchema,
-    }),
+    /** Payment activation status — pending_activation until node:activate-payments completes */
+    payments: z
+      .object({
+        status: z.enum(["pending_activation", "active"]),
+      })
+      .optional(),
+
+    /** Payment configuration (optional — populated by node:activate-payments) */
+    payments_in: z
+      .object({
+        /** Inbound payment configuration for USDC credits top-up */
+        credits_topup: creditsTopupSpecSchema,
+      })
+      .optional(),
 
     /** Governance schedule configuration (optional — defaults to empty schedules) */
     governance: governanceSpecSchema.optional().default({ schedules: [] }),
