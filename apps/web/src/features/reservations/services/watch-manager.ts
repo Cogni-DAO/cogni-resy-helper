@@ -5,15 +5,38 @@ import {
   assertValidDateRange,
   assertValidPartySize,
   assertValidTimeWindow,
+  InvalidDateRangeError,
+  InvalidPartySizeError,
   InvalidStatusTransitionError,
+  InvalidTimeWindowError,
   isValidStatusTransition,
   type WatchRequestStatus,
 } from "@/core";
-import type { ReservationProviderPort, ReservationStorePort } from "@/ports";
+import {
+  type ReservationProviderPort,
+  type ReservationStorePort,
+  WatchRequestAccessDeniedError,
+  WatchRequestNotFoundError,
+} from "@/ports";
 
 export interface WatchManagerDeps {
   store: ReservationStorePort;
   provider: ReservationProviderPort;
+}
+
+const DATE_ONLY_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
+
+function normalizeWatchBoundary(
+  value: string,
+  boundary: "start" | "end"
+): Date {
+  if (DATE_ONLY_PATTERN.test(value)) {
+    return new Date(
+      `${value}T${boundary === "start" ? "00:00:00.000" : "23:59:59.999"}Z`
+    );
+  }
+
+  return new Date(value);
 }
 
 export async function createWatch(
@@ -33,8 +56,12 @@ export async function createWatch(
   },
   deps: WatchManagerDeps
 ) {
-  const dateStart = new Date(input.dateStart);
-  const dateEnd = new Date(input.dateEnd);
+  const dateStart = normalizeWatchBoundary(input.dateStart, "start");
+  const dateEnd = normalizeWatchBoundary(input.dateEnd, "end");
+
+  if (Number.isNaN(dateStart.getTime()) || Number.isNaN(dateEnd.getTime())) {
+    throw new InvalidDateRangeError();
+  }
 
   assertValidDateRange(dateStart, dateEnd);
   assertValidPartySize(input.partySize);
@@ -101,14 +128,22 @@ export async function updateWatchStatus(
 ) {
   const watch = await deps.store.getWatchRequest(watchId);
   if (!watch) {
-    throw new Error(`Watch request not found: ${watchId}`);
+    throw new WatchRequestNotFoundError(watchId);
+  }
+
+  if (watch.userId !== userId) {
+    throw new WatchRequestAccessDeniedError(watchId);
   }
 
   if (!isValidStatusTransition(watch.status as WatchRequestStatus, newStatus)) {
     throw new InvalidStatusTransitionError(watch.status, newStatus);
   }
 
-  const updated = await deps.store.updateWatchRequestStatus(watchId, newStatus);
+  const updated = await deps.store.updateWatchRequestStatus(
+    userId,
+    watchId,
+    newStatus
+  );
   await deps.store.appendEvent({
     userId,
     watchRequestId: watchId,
@@ -135,4 +170,23 @@ export function listActivity(
   deps: WatchManagerDeps
 ) {
   return deps.store.listEvents(userId, watchId);
+}
+
+export function isWatchManagerInputError(
+  error: unknown
+): error is
+  | InvalidDateRangeError
+  | InvalidPartySizeError
+  | InvalidTimeWindowError
+  | InvalidStatusTransitionError
+  | WatchRequestNotFoundError
+  | WatchRequestAccessDeniedError {
+  return (
+    error instanceof InvalidDateRangeError ||
+    error instanceof InvalidPartySizeError ||
+    error instanceof InvalidTimeWindowError ||
+    error instanceof InvalidStatusTransitionError ||
+    error instanceof WatchRequestNotFoundError ||
+    error instanceof WatchRequestAccessDeniedError
+  );
 }

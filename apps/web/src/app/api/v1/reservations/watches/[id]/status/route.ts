@@ -7,7 +7,14 @@ import { getSessionUser } from "@/app/_lib/auth/session";
 import { getContainer } from "@/bootstrap/container";
 import { wrapRouteHandlerWithLogging } from "@/bootstrap/http";
 import { watchStatusUpdateOperation } from "@/contracts/reservations.watch.v1.contract";
-import { updateWatchStatus } from "@/features/reservations/services/watch-manager";
+import {
+  isWatchManagerInputError,
+  updateWatchStatus,
+} from "@/features/reservations/services/watch-manager";
+import {
+  WatchRequestAccessDeniedError,
+  WatchRequestNotFoundError,
+} from "@/ports";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -51,7 +58,13 @@ export const PATCH = wrapRouteHandlerWithLogging<{
       return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
     }
 
-    const input = watchStatusUpdateOperation.input.parse(body);
+    const parsed = watchStatusUpdateOperation.input.safeParse(body);
+    if (!parsed.success) {
+      return NextResponse.json(
+        { error: "Invalid watch status payload" },
+        { status: 400 }
+      );
+    }
     if (!sessionUser) {
       throw new Error("sessionUser required");
     }
@@ -62,11 +75,32 @@ export const PATCH = wrapRouteHandlerWithLogging<{
 
     const { id } = await context.params;
     const container = getContainer();
-    const watch = await updateWatchStatus(sessionUser.id, id, input.status, {
-      store: container.reservationStore,
-      provider: container.reservationProvider,
-    });
+    try {
+      const watch = await updateWatchStatus(
+        sessionUser.id,
+        id,
+        parsed.data.status,
+        {
+          store: container.reservationStore,
+          provider: container.reservationProvider,
+        }
+      );
 
-    return NextResponse.json(toWireFormat(watch));
+      return NextResponse.json(toWireFormat(watch));
+    } catch (error) {
+      if (error instanceof WatchRequestNotFoundError) {
+        return NextResponse.json({ error: error.message }, { status: 404 });
+      }
+
+      if (error instanceof WatchRequestAccessDeniedError) {
+        return NextResponse.json({ error: error.message }, { status: 403 });
+      }
+
+      if (isWatchManagerInputError(error)) {
+        return NextResponse.json({ error: error.message }, { status: 400 });
+      }
+
+      throw error;
+    }
   }
 );

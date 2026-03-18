@@ -156,6 +156,7 @@ export {
   type UpsertReservationConnectionParams,
   type WatchEvent,
   type WatchRequest,
+  WatchRequestAccessDeniedError,
   WatchRequestNotFoundError,
   type WatchRequestStatus,
 } from "./reservation.port";

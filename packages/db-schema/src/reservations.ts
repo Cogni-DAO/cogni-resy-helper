@@ -254,14 +254,14 @@ export const reservationAlertReceipts = pgTable(
   (table) => ({
     gmailDedupUnique: uniqueIndex(
       "reservation_alert_receipts_gmail_dedup_unique"
-    ).on(table.gmailDedupKey),
+    ).on(table.userId, table.gmailDedupKey),
     logicalAlertUnique: uniqueIndex(
       "reservation_alert_receipts_logical_alert_unique"
-    ).on(table.logicalAlertKey),
+    ).on(table.userId, table.logicalAlertKey),
     gmailMessageUnique: uniqueIndex(
       "reservation_alert_receipts_gmail_message_unique"
     )
-      .on(table.gmailMessageId)
+      .on(table.userId, table.gmailMessageId)
       .where(sql`${table.gmailMessageId} is not null`),
     userCreatedIdx: index("reservation_alert_receipts_user_created_idx").on(
       table.userId,

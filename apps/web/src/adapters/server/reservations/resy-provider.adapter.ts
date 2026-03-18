@@ -13,7 +13,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { chromium } from "@playwright/test";
+import { chromium, type Page } from "@playwright/test";
 
 import type {
   AlertSetupResult,
@@ -28,6 +28,46 @@ import {
   encryptSecret,
   isReconnectRequiredPage,
 } from "./session-crypto";
+
+type PlaywrightStorageState = {
+  cookies: Array<{
+    name: string;
+    value: string;
+    domain: string;
+    path: string;
+    expires: number;
+    httpOnly: boolean;
+    secure: boolean;
+    sameSite: "Strict" | "Lax" | "None";
+  }>;
+  origins: Array<{
+    origin: string;
+    localStorage: Array<{
+      name: string;
+      value: string;
+    }>;
+  }>;
+};
+
+async function isAuthenticatedResySession(
+  page: Page,
+  storageState: PlaywrightStorageState
+): Promise<boolean> {
+  if (await isReconnectRequiredPage(page)) {
+    return false;
+  }
+
+  const content = await page.content();
+  if (/(log out|sign out|my resy|account|profile)/i.test(content)) {
+    return true;
+  }
+
+  return storageState.cookies.some(
+    (cookie) =>
+      cookie.domain.includes("resy.com") &&
+      /(auth|session|token|user)/i.test(cookie.name)
+  );
+}
 
 export class ResyProviderAdapter implements ReservationProviderPort {
   readonly platformId = "resy" as const;
@@ -58,14 +98,11 @@ export class ResyProviderAdapter implements ReservationProviderPort {
       });
 
       const deadline = Date.now() + 5 * 60_000;
-      let authenticated = false;
 
       while (Date.now() < deadline) {
-        const storageState = await context.storageState();
-        authenticated = storageState.cookies.some(
-          (cookie: { domain: string }) => cookie.domain.includes("resy.com")
-        );
-        if (authenticated) {
+        const storageState =
+          (await context.storageState()) as PlaywrightStorageState;
+        if (await isAuthenticatedResySession(page, storageState)) {
           const encrypted = encryptSecret(JSON.stringify(storageState));
           return {
             sessionStateCiphertext: encrypted,
@@ -93,25 +130,7 @@ export class ResyProviderAdapter implements ReservationProviderPort {
     params: BookingAssistParams
   ): Promise<BookingAssistResult> {
     const stateJson = decryptSecret(params.sessionStateCiphertext);
-    const state = JSON.parse(stateJson) as {
-      cookies: Array<{
-        name: string;
-        value: string;
-        domain: string;
-        path: string;
-        expires: number;
-        httpOnly: boolean;
-        secure: boolean;
-        sameSite: "Strict" | "Lax" | "None";
-      }>;
-      origins: Array<{
-        origin: string;
-        localStorage: Array<{
-          name: string;
-          value: string;
-        }>;
-      }>;
-    };
+    const state = JSON.parse(stateJson) as PlaywrightStorageState;
 
     const userDataDir = await mkdtemp(join(tmpdir(), "resy-claim-"));
     const browser = await chromium.launch({ headless: true });
@@ -124,7 +143,7 @@ export class ResyProviderAdapter implements ReservationProviderPort {
 
       await page.goto(targetUrl, { waitUntil: "domcontentloaded" });
 
-      if (await isReconnectRequiredPage(page)) {
+      if (!(await isAuthenticatedResySession(page, state))) {
         return {
           success: false,
           reconnectRequired: true,

@@ -41,6 +41,13 @@ export class WatchRequestNotFoundError extends Error {
   }
 }
 
+export class WatchRequestAccessDeniedError extends Error {
+  constructor(public readonly id: string) {
+    super(`Watch request does not belong to the current user: ${id}`);
+    this.name = "WatchRequestAccessDeniedError";
+  }
+}
+
 export interface CreateWatchRequestParams {
   userId: string;
   restaurant: string;
@@ -147,6 +154,7 @@ export interface ReservationStorePort {
   listWatchRequests(userId: string): Promise<WatchRequest[]>;
   listActiveWatchRequests(userId: string): Promise<WatchRequest[]>;
   updateWatchRequestStatus(
+    userId: string,
     id: string,
     status: WatchRequestStatus
   ): Promise<WatchRequest>;

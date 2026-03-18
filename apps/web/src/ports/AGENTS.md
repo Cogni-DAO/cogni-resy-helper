@@ -53,6 +53,9 @@ Does NOT re-export packages with `node:` transitive dependencies.
 - OperatorWalletPort, TransferIntent
 - ProviderFundingPort, ProviderFundingContext, ProviderFundingOutcome
 - TreasurySettlementPort, TreasurySettlementOutcome
+- ReservationStorePort, GmailIntegrationPort, ReservationProviderPort
+- Reservation feature types (WatchRequest, ReservationConnection, ReservationAlertReceipt, BookingAttempt, WatchEvent)
+- Reservation flow errors (WatchRequestNotFoundError, WatchRequestAccessDeniedError)
 - Types (ChargeReceiptParams, LlmCaller, BillingAccount, CreditLedgerEntry, etc.)
 
 ### `server.ts` — Server-only barrel

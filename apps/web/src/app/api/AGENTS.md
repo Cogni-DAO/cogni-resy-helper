@@ -5,7 +5,7 @@
 ## Metadata
 
 - **Owners:** @derek @core-dev
-- **Last reviewed:** 2026-03-05
+- **Last reviewed:** 2026-03-18
 - **Status:** draft
 
 ## Purpose
@@ -59,6 +59,15 @@ HTTP API endpoints using Next.js App Router. Contract-validated entry points tha
   - `/api/v1/users/me/ownership` [GET] - current ownership summary derived from linked identities
   - `/api/v1/work/items` [GET] - list work items with optional filters (SIWE auth)
   - `/api/v1/work/items/[id]` [GET] - get single work item by ID (SIWE auth)
+  - `/api/v1/reservations/connections` [GET] - Gmail and Resy connection state for the current user
+  - `/api/v1/reservations/connections/gmail/start` [POST] - start Google OAuth for Gmail
+  - `/api/v1/reservations/connections/gmail/callback` [GET] - finish Gmail OAuth and register Gmail watch
+  - `/api/v1/reservations/connections/gmail/renew` [POST] - renew Gmail watch registration
+  - `/api/v1/reservations/connections/gmail/push` [POST] - bearer-authenticated Pub/Sub ingress for Gmail history pushes
+  - `/api/v1/reservations/connections/resy/capture` [POST] - launch the short-lived Resy session capture flow
+  - `/api/v1/reservations/watches` [GET, POST] - list and create canonical reservation watches
+  - `/api/v1/reservations/watches/[id]/status` [PATCH] - update watch status for the owning user
+  - `/api/v1/reservations/activity` [GET] - reservation activity log
 - **Files considered API:** v1/_/route.ts, admin/_/route.ts
 
 ## Responsibilities

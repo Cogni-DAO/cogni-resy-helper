@@ -175,6 +175,7 @@ export async function ingestGmailPushEvent(
 
     if (!resyConnection?.sessionStateCiphertext) {
       await deps.store.updateWatchRequestStatus(
+        connection.userId,
         matchedWatch.id,
         "reconnect_required"
       );
@@ -225,7 +226,11 @@ export async function ingestGmailPushEvent(
           ...booking.details,
         }
       );
-      await deps.store.updateWatchRequestStatus(matchedWatch.id, "fulfilled");
+      await deps.store.updateWatchRequestStatus(
+        connection.userId,
+        matchedWatch.id,
+        "fulfilled"
+      );
       await deps.store.appendEvent({
         userId: connection.userId,
         watchRequestId: matchedWatch.id,
@@ -260,6 +265,7 @@ export async function ingestGmailPushEvent(
           sessionStatus: "reconnect_required",
         });
         await deps.store.updateWatchRequestStatus(
+          connection.userId,
           matchedWatch.id,
           "reconnect_required"
         );

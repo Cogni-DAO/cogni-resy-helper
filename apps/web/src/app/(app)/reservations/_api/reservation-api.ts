@@ -36,9 +36,24 @@ async function apiFetch<T>(url: string, init?: RequestInit): Promise<T> {
     credentials: "same-origin",
   });
   if (!response.ok) {
-    const body = await response.json().catch(() => ({
-      error: `HTTP ${response.status}`,
-    }));
+    const rawBody = await response.text();
+    const body = (() => {
+      if (!rawBody) {
+        return { error: `HTTP ${response.status}` };
+      }
+
+      try {
+        return JSON.parse(rawBody) as { error?: string };
+      } catch {
+        return {
+          error:
+            rawBody.length > 200
+              ? `HTTP ${response.status}`
+              : rawBody.replaceAll(/<[^>]+>/g, "").trim() ||
+                `HTTP ${response.status}`,
+        };
+      }
+    })();
     throw new Error(body.error || `HTTP ${response.status}`);
   }
   return response.json();

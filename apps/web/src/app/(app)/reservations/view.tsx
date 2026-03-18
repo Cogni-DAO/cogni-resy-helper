@@ -5,6 +5,7 @@
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
+  AlertCircle,
   Calendar,
   ExternalLink,
   Mail,
@@ -12,9 +13,12 @@ import {
   ShieldCheck,
 } from "lucide-react";
 import type { ReactElement } from "react";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import {
+  Alert,
+  AlertDescription,
+  AlertTitle,
   Badge,
   Button,
   Card,
@@ -49,6 +53,54 @@ const STATUS_INTENT = {
   pending: "secondary",
   error: "destructive",
 } as const;
+
+type ReservationNotice = {
+  kind: "info" | "success" | "error";
+  title: string;
+  message: string;
+};
+
+function getErrorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : "Something went wrong.";
+}
+
+function buildUtcBoundaryIso(date: string, boundary: "start" | "end"): string {
+  return `${date}T${boundary === "start" ? "00:00:00.000" : "23:59:59.999"}Z`;
+}
+
+function showBrowserNotification(title: string, body: string): void {
+  if (typeof window === "undefined" || !("Notification" in window)) {
+    return;
+  }
+
+  if (window.Notification.permission === "granted") {
+    new window.Notification(title, { body });
+  } else if (window.Notification.permission === "default") {
+    void window.Notification.requestPermission().then((permission) => {
+      if (permission === "granted") {
+        new window.Notification(title, { body });
+      }
+    });
+  }
+}
+
+function NoticeBanner({
+  notice,
+}: {
+  notice: ReservationNotice | null;
+}): ReactElement | null {
+  if (!notice) {
+    return null;
+  }
+
+  return (
+    <Alert variant={notice.kind === "error" ? "destructive" : "default"}>
+      <AlertCircle className="size-4" />
+      <AlertTitle>{notice.title}</AlertTitle>
+      <AlertDescription>{notice.message}</AlertDescription>
+    </Alert>
+  );
+}
 
 function StatusBadge({ status }: { status: string }): ReactElement {
   return (
@@ -115,15 +167,33 @@ function ConnectionsSection({
   connections: ConnectionsOutput;
 }): ReactElement {
   const queryClient = useQueryClient();
+  const [notice, setNotice] = useState<ReservationNotice | null>(null);
 
   const gmailStartMutation = useMutation({
     mutationFn: startGmailConnection,
     onSuccess: (result) => {
-      window.open(
+      const popup = window.open(
         result.authorizationUrl,
         "gmail-connect",
         "width=520,height=720"
       );
+      if (!popup) {
+        window.location.assign(result.authorizationUrl);
+      }
+      setNotice({
+        kind: "info",
+        title: "Gmail connection started",
+        message: popup
+          ? "Finish the Google OAuth flow in the popup window."
+          : "Popup was blocked, so Gmail auth opened in the current tab.",
+      });
+    },
+    onError: (error) => {
+      setNotice({
+        kind: "error",
+        title: "Gmail connection failed",
+        message: getErrorMessage(error),
+      });
     },
   });
 
@@ -136,11 +206,31 @@ function ConnectionsSection({
       void queryClient.invalidateQueries({
         queryKey: ["reservation-activity"],
       });
+      setNotice({
+        kind: "success",
+        title: "Gmail watch renewed",
+        message: "The Gmail watch registration was refreshed successfully.",
+      });
+    },
+    onError: (error) => {
+      setNotice({
+        kind: "error",
+        title: "Gmail watch renewal failed",
+        message: getErrorMessage(error),
+      });
     },
   });
 
   const resyCaptureMutation = useMutation({
     mutationFn: () => captureResyConnection(),
+    onMutate: () => {
+      setNotice({
+        kind: "info",
+        title: "Opening Resy browser",
+        message:
+          "A local browser window should open. Log into Resy there to finish capture.",
+      });
+    },
     onSuccess: () => {
       void queryClient.invalidateQueries({
         queryKey: ["reservation-connections"],
@@ -148,89 +238,109 @@ function ConnectionsSection({
       void queryClient.invalidateQueries({
         queryKey: ["reservation-activity"],
       });
+      setNotice({
+        kind: "success",
+        title: "Resy session captured",
+        message:
+          "Your authenticated Resy session state was stored successfully.",
+      });
+    },
+    onError: (error) => {
+      setNotice({
+        kind: "error",
+        title: "Resy capture failed",
+        message: getErrorMessage(error),
+      });
     },
   });
 
   return (
-    <div className="grid gap-4 lg:grid-cols-2">
-      <ConnectionCard
-        title="Connect Gmail"
-        description="Official Gmail OAuth and Gmail watch registration for Resy Notify ingestion."
-        status={connections.gmail.status}
-        meta={
-          <div className="space-y-1 text-sm">
-            <p className="text-muted-foreground">
-              Account:{" "}
-              {connections.gmail.providerAccountEmail ?? "Not connected"}
-            </p>
-            <p className="text-muted-foreground">
-              Watch: {connections.gmail.watchStatus} /{" "}
-              {connections.gmail.renewalStatus}
-            </p>
-            {connections.gmail.watchExpiryAt && (
+    <div className="space-y-4">
+      <NoticeBanner notice={notice} />
+      <div className="grid gap-4 lg:grid-cols-2">
+        <ConnectionCard
+          title="Connect Gmail"
+          description="Official Gmail OAuth and Gmail watch registration for Resy Notify ingestion."
+          status={connections.gmail.status}
+          meta={
+            <div className="space-y-1 text-sm">
               <p className="text-muted-foreground">
-                Expires: {formatDateTime(connections.gmail.watchExpiryAt)}
+                Account:{" "}
+                {connections.gmail.providerAccountEmail ?? "Not connected"}
               </p>
-            )}
-          </div>
-        }
-        actions={
-          <div className="flex flex-wrap gap-2">
-            <Button
-              size="sm"
-              onClick={() => gmailStartMutation.mutate()}
-              disabled={gmailStartMutation.isPending}
-            >
-              <Mail className="mr-2 size-4" />
-              {connections.gmail.status === "connected"
-                ? "Reconnect Gmail"
-                : "Connect Gmail"}
-            </Button>
-            <Button
-              size="sm"
-              variant="outline"
-              onClick={() => gmailRenewMutation.mutate()}
-              disabled={
-                gmailRenewMutation.isPending ||
-                connections.gmail.status !== "connected"
-              }
-            >
-              <RefreshCcw className="mr-2 size-4" />
-              Renew Watch
-            </Button>
-          </div>
-        }
-      />
+              <p className="text-muted-foreground">
+                Watch: {connections.gmail.watchStatus} /{" "}
+                {connections.gmail.renewalStatus}
+              </p>
+              {connections.gmail.watchExpiryAt && (
+                <p className="text-muted-foreground">
+                  Expires: {formatDateTime(connections.gmail.watchExpiryAt)}
+                </p>
+              )}
+            </div>
+          }
+          actions={
+            <div className="flex flex-wrap gap-2">
+              <Button
+                size="sm"
+                onClick={() => gmailStartMutation.mutate()}
+                disabled={gmailStartMutation.isPending}
+              >
+                <Mail className="mr-2 size-4" />
+                {gmailStartMutation.isPending
+                  ? "Opening Gmail..."
+                  : connections.gmail.status === "connected"
+                    ? "Reconnect Gmail"
+                    : "Connect Gmail"}
+              </Button>
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => gmailRenewMutation.mutate()}
+                disabled={
+                  gmailRenewMutation.isPending ||
+                  connections.gmail.status !== "connected"
+                }
+              >
+                <RefreshCcw className="mr-2 size-4" />
+                {gmailRenewMutation.isPending ? "Renewing..." : "Renew Watch"}
+              </Button>
+            </div>
+          }
+        />
 
-      <ConnectionCard
-        title="Connect Resy"
-        description="Launch a short-lived controlled browser login and store encrypted Playwright state."
-        status={connections.resy.status}
-        meta={
-          <div className="space-y-1 text-sm">
-            <p className="text-muted-foreground">
-              Session: {connections.resy.sessionStatus ?? "Not captured"}
-            </p>
-            {connections.resy.lastVerifiedAt && (
+        <ConnectionCard
+          title="Connect Resy"
+          description="Launch a short-lived controlled browser login and store encrypted Playwright state."
+          status={connections.resy.status}
+          meta={
+            <div className="space-y-1 text-sm">
               <p className="text-muted-foreground">
-                Verified: {formatDateTime(connections.resy.lastVerifiedAt)}
+                Session: {connections.resy.sessionStatus ?? "Not captured"}
               </p>
-            )}
-          </div>
-        }
-        actions={
-          <Button
-            size="sm"
-            onClick={() => resyCaptureMutation.mutate()}
-            disabled={resyCaptureMutation.isPending}
-          >
-            <ShieldCheck className="mr-2 size-4" />
-            {connections.resy.status === "connected"
-              ? "Reconnect Resy"
-              : "Capture Resy Session"}
-          </Button>
-        }
-      />
+              {connections.resy.lastVerifiedAt && (
+                <p className="text-muted-foreground">
+                  Verified: {formatDateTime(connections.resy.lastVerifiedAt)}
+                </p>
+              )}
+            </div>
+          }
+          actions={
+            <Button
+              size="sm"
+              onClick={() => resyCaptureMutation.mutate()}
+              disabled={resyCaptureMutation.isPending}
+            >
+              <ShieldCheck className="mr-2 size-4" />
+              {resyCaptureMutation.isPending
+                ? "Waiting for Resy login..."
+                : connections.resy.status === "connected"
+                  ? "Reconnect Resy"
+                  : "Capture Resy Session"}
+            </Button>
+          }
+        />
+      </div>
     </div>
   );
 }
@@ -246,6 +356,7 @@ function WatchForm(): ReactElement {
   const [timeEnd, setTimeEnd] = useState("21:00");
   const [idealTime, setIdealTime] = useState("19:00");
   const [autoClaim, setAutoClaim] = useState(true);
+  const [notice, setNotice] = useState<ReservationNotice | null>(null);
 
   const mutation = useMutation({
     mutationFn: createWatch,
@@ -263,6 +374,19 @@ function WatchForm(): ReactElement {
       void queryClient.invalidateQueries({
         queryKey: ["reservation-activity"],
       });
+      setNotice({
+        kind: "success",
+        title: "Watch created",
+        message:
+          "Your watch is active. Use the Resy Notify link below to configure the official alert.",
+      });
+    },
+    onError: (error) => {
+      setNotice({
+        kind: "error",
+        title: "Watch creation failed",
+        message: getErrorMessage(error),
+      });
     },
   });
 
@@ -272,6 +396,9 @@ function WatchForm(): ReactElement {
         <CardTitle className="text-base">Create Watch</CardTitle>
       </CardHeader>
       <CardContent className="grid gap-3 md:grid-cols-2">
+        <div className="md:col-span-2">
+          <NoticeBanner notice={notice} />
+        </div>
         <Input
           value={restaurant}
           onChange={(event) => setRestaurant(event.target.value)}
@@ -329,11 +456,11 @@ function WatchForm(): ReactElement {
                 restaurant,
                 restaurantSlug: restaurantSlug || undefined,
                 partySize: Number.parseInt(partySize, 10),
-                dateStart: new Date(dateStart).toISOString(),
-                dateEnd: new Date(dateEnd).toISOString(),
+                dateStart: buildUtcBoundaryIso(dateStart, "start"),
+                dateEnd: buildUtcBoundaryIso(dateEnd, "end"),
                 timeStart,
                 timeEnd,
-                idealTime,
+                idealTime: idealTime || undefined,
                 autoClaim,
               })
             }
@@ -345,15 +472,8 @@ function WatchForm(): ReactElement {
               Number.isNaN(Number.parseInt(partySize, 10))
             }
           >
-            Create Watch
+            {mutation.isPending ? "Creating..." : "Create Watch"}
           </Button>
-          {mutation.error && (
-            <p className="mt-2 text-destructive text-sm">
-              {mutation.error instanceof Error
-                ? mutation.error.message
-                : "Failed to create watch"}
-            </p>
-          )}
         </div>
       </CardContent>
     </Card>
@@ -366,6 +486,7 @@ function WatchesSection({
   watches: WatchRequestResponse[];
 }): ReactElement {
   const queryClient = useQueryClient();
+  const [notice, setNotice] = useState<ReservationNotice | null>(null);
   const statusMutation = useMutation({
     mutationFn: ({
       id,
@@ -379,11 +500,24 @@ function WatchesSection({
       void queryClient.invalidateQueries({
         queryKey: ["reservation-activity"],
       });
+      setNotice({
+        kind: "success",
+        title: "Watch updated",
+        message: "The watch status changed successfully.",
+      });
+    },
+    onError: (error) => {
+      setNotice({
+        kind: "error",
+        title: "Watch update failed",
+        message: getErrorMessage(error),
+      });
     },
   });
 
   return (
     <div className="space-y-3">
+      <NoticeBanner notice={notice} />
       {watches.map((watch) => (
         <Card key={watch.id}>
           <CardContent className="flex flex-col gap-4 p-4 lg:flex-row lg:items-center lg:justify-between">
@@ -498,6 +632,9 @@ function ActivitySection({
 }
 
 export function ReservationsView(): ReactElement {
+  const [notice, setNotice] = useState<ReservationNotice | null>(null);
+  const lastNotifiedEventIdRef = useRef<string | null>(null);
+  const lastGmailHealthRef = useRef<string | null>(null);
   const connectionsQuery = useQuery({
     queryKey: ["reservation-connections"],
     queryFn: fetchConnections,
@@ -513,6 +650,63 @@ export function ReservationsView(): ReactElement {
     queryFn: () => fetchActivity(),
     refetchInterval: 5000,
   });
+
+  useEffect(() => {
+    const latestEvent = activityQuery.data?.events[0];
+    if (!latestEvent || latestEvent.id === lastNotifiedEventIdRef.current) {
+      return;
+    }
+
+    if (
+      latestEvent.eventType === "claim_succeeded" ||
+      latestEvent.eventType === "claim_failed" ||
+      latestEvent.eventType === "reconnect_required"
+    ) {
+      const title =
+        latestEvent.eventType === "claim_succeeded"
+          ? "Reservation claimed"
+          : latestEvent.eventType === "claim_failed"
+            ? "Claim attempt failed"
+            : "Reconnect required";
+      const message =
+        latestEvent.eventType === "claim_succeeded"
+          ? "A booking attempt succeeded. Check the activity log for details."
+          : latestEvent.eventType === "claim_failed"
+            ? "The booking attempt finished without success."
+            : "One of your reservation connections needs attention.";
+
+      setNotice({
+        kind: latestEvent.eventType === "claim_succeeded" ? "success" : "error",
+        title,
+        message,
+      });
+      showBrowserNotification(title, message);
+    }
+
+    lastNotifiedEventIdRef.current = latestEvent.id;
+  }, [activityQuery.data]);
+
+  useEffect(() => {
+    const renewalStatus = connectionsQuery.data?.gmail.renewalStatus;
+    if (!renewalStatus || renewalStatus === lastGmailHealthRef.current) {
+      return;
+    }
+
+    if (renewalStatus === "expired" || renewalStatus === "reconnect_required") {
+      const message =
+        renewalStatus === "expired"
+          ? "Your Gmail watch expired and needs to be renewed."
+          : "Your Gmail connection needs to be reconnected.";
+      setNotice({
+        kind: "error",
+        title: "Gmail attention required",
+        message,
+      });
+      showBrowserNotification("Gmail attention required", message);
+    }
+
+    lastGmailHealthRef.current = renewalStatus;
+  }, [connectionsQuery.data]);
 
   if (connectionsQuery.error || watchesQuery.error || activityQuery.error) {
     const error =
@@ -539,6 +733,8 @@ export function ReservationsView(): ReactElement {
           Notify to claim loop.
         </p>
       </div>
+
+      <NoticeBanner notice={notice} />
 
       {connectionsQuery.data && (
         <ConnectionsSection connections={connectionsQuery.data} />

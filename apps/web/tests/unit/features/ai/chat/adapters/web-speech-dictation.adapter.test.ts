@@ -58,6 +58,15 @@ function removeMockSpeechRecognition() {
   delete (window as Record<string, unknown>).SpeechRecognition;
 }
 
+function requireAdapter() {
+  const adapter = createWebSpeechDictationAdapter();
+  expect(adapter).toBeDefined();
+  if (!adapter) {
+    throw new Error("Expected dictation adapter to be available");
+  }
+  return adapter;
+}
+
 describe("web-speech-dictation.adapter", () => {
   afterEach(() => {
     removeMockSpeechRecognition();
@@ -95,33 +104,33 @@ describe("web-speech-dictation.adapter", () => {
     });
 
     it("starts recognition on listen()", () => {
-      const adapter = createWebSpeechDictationAdapter()!;
+      const adapter = requireAdapter();
       adapter.listen();
       expect(mockInstance.start).toHaveBeenCalledOnce();
     });
 
     it("configures continuous and interimResults", () => {
-      const adapter = createWebSpeechDictationAdapter()!;
+      const adapter = requireAdapter();
       adapter.listen();
       expect(mockInstance.continuous).toBe(true);
       expect(mockInstance.interimResults).toBe(true);
     });
 
     it("session status starts as 'starting'", () => {
-      const adapter = createWebSpeechDictationAdapter()!;
+      const adapter = requireAdapter();
       const session = adapter.listen();
       expect(session.status).toEqual({ type: "starting" });
     });
 
     it("session status becomes 'running' on onstart", () => {
-      const adapter = createWebSpeechDictationAdapter()!;
+      const adapter = requireAdapter();
       const session = adapter.listen();
       mockInstance.onstart?.(new Event("start"));
       expect(session.status).toEqual({ type: "running" });
     });
 
     it("stop() calls recognition.stop()", async () => {
-      const adapter = createWebSpeechDictationAdapter()!;
+      const adapter = requireAdapter();
       const session = adapter.listen();
       await session.stop();
       expect(mockInstance.stop).toHaveBeenCalledOnce();
@@ -129,7 +138,7 @@ describe("web-speech-dictation.adapter", () => {
     });
 
     it("cancel() calls recognition.abort()", () => {
-      const adapter = createWebSpeechDictationAdapter()!;
+      const adapter = requireAdapter();
       const session = adapter.listen();
       session.cancel();
       expect(mockInstance.abort).toHaveBeenCalledOnce();
@@ -143,7 +152,7 @@ describe("web-speech-dictation.adapter", () => {
     });
 
     it("fires onSpeechStart when speech is detected", () => {
-      const adapter = createWebSpeechDictationAdapter()!;
+      const adapter = requireAdapter();
       const session = adapter.listen();
       const callback = vi.fn();
       session.onSpeechStart(callback);
@@ -153,7 +162,7 @@ describe("web-speech-dictation.adapter", () => {
     });
 
     it("fires onSpeechStart only once", () => {
-      const adapter = createWebSpeechDictationAdapter()!;
+      const adapter = requireAdapter();
       const session = adapter.listen();
       const callback = vi.fn();
       session.onSpeechStart(callback);
@@ -164,7 +173,7 @@ describe("web-speech-dictation.adapter", () => {
     });
 
     it("fires onSpeech with interim results", () => {
-      const adapter = createWebSpeechDictationAdapter()!;
+      const adapter = requireAdapter();
       const session = adapter.listen();
       const callback = vi.fn();
       session.onSpeech(callback);
@@ -188,7 +197,7 @@ describe("web-speech-dictation.adapter", () => {
     });
 
     it("fires onSpeech and onSpeechEnd with final results", () => {
-      const adapter = createWebSpeechDictationAdapter()!;
+      const adapter = requireAdapter();
       const session = adapter.listen();
       const speechCb = vi.fn();
       const endCb = vi.fn();
@@ -213,7 +222,7 @@ describe("web-speech-dictation.adapter", () => {
     });
 
     it("unsubscribe removes callback", () => {
-      const adapter = createWebSpeechDictationAdapter()!;
+      const adapter = requireAdapter();
       const session = adapter.listen();
       const callback = vi.fn();
       const unsub = session.onSpeechStart(callback);
@@ -224,7 +233,7 @@ describe("web-speech-dictation.adapter", () => {
     });
 
     it("sets error status on recognition error", () => {
-      const adapter = createWebSpeechDictationAdapter()!;
+      const adapter = requireAdapter();
       const session = adapter.listen();
       mockInstance.onerror?.(new Event("error"));
       expect(session.status).toEqual({ type: "ended", reason: "error" });

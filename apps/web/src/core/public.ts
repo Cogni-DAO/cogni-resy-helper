@@ -139,6 +139,7 @@ export {
   InvalidDateRangeError,
   InvalidPartySizeError,
   InvalidStatusTransitionError,
+  InvalidTimeWindowError,
   isValidStatusTransition,
   isWatchable,
   matchesWatch,

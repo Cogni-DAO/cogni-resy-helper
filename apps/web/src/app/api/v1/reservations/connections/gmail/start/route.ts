@@ -28,14 +28,30 @@ export const POST = wrapRouteHandlerWithLogging(
     ).toString();
 
     const container = getContainer();
-    const authorizationUrl = startGmailConnection(sessionUser.id, redirectUri, {
-      store: container.reservationStore,
-      gmail: container.reservationGmail,
-      provider: container.reservationProvider,
-    });
+    try {
+      const authorizationUrl = startGmailConnection(
+        sessionUser.id,
+        redirectUri,
+        {
+          store: container.reservationStore,
+          gmail: container.reservationGmail,
+          provider: container.reservationProvider,
+        }
+      );
 
-    return NextResponse.json(
-      gmailConnectStartOperation.output.parse({ authorizationUrl })
-    );
+      return NextResponse.json(
+        gmailConnectStartOperation.output.parse({ authorizationUrl })
+      );
+    } catch (error) {
+      return NextResponse.json(
+        {
+          error:
+            error instanceof Error
+              ? error.message
+              : "Failed to start Gmail connection.",
+        },
+        { status: 400 }
+      );
+    }
   }
 );

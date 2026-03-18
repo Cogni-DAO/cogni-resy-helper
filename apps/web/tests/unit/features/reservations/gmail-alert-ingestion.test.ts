@@ -159,6 +159,7 @@ describe("features/reservations/gmail-alert-ingestion", () => {
     expect(store.createClaimAttempt).toHaveBeenCalledTimes(1);
     expect(attemptBooking).toHaveBeenCalledTimes(1);
     expect(store.updateWatchRequestStatus).toHaveBeenCalledWith(
+      "user-1",
       "watch-1",
       "fulfilled"
     );

@@ -2,7 +2,7 @@
 id: task.0166
 type: task
 title: Reservation Assistant V1 Demo
-status: needs_implement
+status: done
 priority: 1
 rank: 1
 estimate: 4
@@ -19,7 +19,7 @@ revision: 1
 blocked_by:
 deploy_verified: false
 created: 2026-03-16
-updated: 2026-03-17
+updated: 2026-03-18
 labels: [mvp, reservations]
 external_refs:
 ---
@@ -147,7 +147,7 @@ Deliver the smallest truthful demo that can actually help one friend get a hard 
 - [x] Create API routes (`apps/web/src/app/api/v1/reservations/`)
 - [x] Build the user flow in `apps/web/src/app/(app)/reservations/` with Connections, Watches, and Activity
 - [x] Update guide and setup docs for the real loop
-- [ ] Validate with `pnpm check`
+- [x] Validate with `pnpm check`
 
 ## Validation
 

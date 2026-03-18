@@ -12,6 +12,7 @@ import {
 } from "@/contracts/reservations.watch.v1.contract";
 import {
   createWatch,
+  isWatchManagerInputError,
   listWatches,
 } from "@/features/reservations/services/watch-manager";
 
@@ -55,18 +56,35 @@ export const POST = wrapRouteHandlerWithLogging(
       return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
     }
 
-    const input = watchCreateOperation.input.parse(body);
+    const parsed = watchCreateOperation.input.safeParse(body);
+    if (!parsed.success) {
+      return NextResponse.json(
+        { error: "Invalid watch payload" },
+        { status: 400 }
+      );
+    }
     if (!sessionUser) {
       throw new Error("sessionUser required");
     }
 
     const container = getContainer();
-    const watch = await createWatch(sessionUser.id, input, {
-      store: container.reservationStore,
-      provider: container.reservationProvider,
-    });
+    try {
+      const watch = await createWatch(sessionUser.id, parsed.data, {
+        store: container.reservationStore,
+        provider: container.reservationProvider,
+      });
 
-    return NextResponse.json(toWireFormat(watch), { status: 201 });
+      return NextResponse.json(toWireFormat(watch), { status: 201 });
+    } catch (error) {
+      if (isWatchManagerInputError(error)) {
+        return NextResponse.json(
+          { error: error instanceof Error ? error.message : "Invalid watch" },
+          { status: 400 }
+        );
+      }
+
+      throw error;
+    }
   }
 );
 

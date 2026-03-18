@@ -141,10 +141,15 @@ export async function ReservationWatchWorkflow(
     return;
   }
 
+  const resolvedAlertPayload = alertPayload;
+  if (!resolvedAlertPayload) {
+    throw new Error("Alert payload missing after alert condition resolved");
+  }
+
   // 3. Record alert and notify user
   await recordEventActivity({
     watchRequestId,
-    source: alertPayload!.source as
+    source: resolvedAlertPayload.source as
       | "system"
       | "resy"
       | "opentable"
@@ -152,13 +157,13 @@ export async function ReservationWatchWorkflow(
       | "webhook"
       | "manual",
     eventType: "alert_received",
-    payload: alertPayload!.payload,
+    payload: resolvedAlertPayload.payload,
   });
 
   await notifyUserActivity({
     watchRequestId,
     userId,
-    alertPayload: alertPayload!,
+    alertPayload: resolvedAlertPayload,
   });
 
   await recordEventActivity({
@@ -186,6 +191,13 @@ export async function ReservationWatchWorkflow(
     return;
   }
 
+  const resolvedApprovalPayload = approvalPayload;
+  if (!resolvedApprovalPayload) {
+    throw new Error(
+      "Approval payload missing after approval condition resolved"
+    );
+  }
+
   // 5. USER_APPROVAL_GATE: Booking assist only after explicit approval
   await recordEventActivity({
     watchRequestId,
@@ -202,8 +214,8 @@ export async function ReservationWatchWorkflow(
   const bookingResult = await attemptBookingActivity({
     watchRequestId,
     platform,
-    sessionStatePath: approvalPayload!.sessionStatePath,
-    targetSlot: approvalPayload!.targetSlot,
+    sessionStatePath: resolvedApprovalPayload.sessionStatePath,
+    targetSlot: resolvedApprovalPayload.targetSlot,
   });
 
   if (bookingResult.success) {

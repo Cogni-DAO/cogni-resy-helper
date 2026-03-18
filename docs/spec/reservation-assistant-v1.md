@@ -10,7 +10,7 @@ read_when: Designing or implementing the reservation assistant, Gmail alert inge
 implements:
 owner: derekg1729
 created: 2026-03-17
-verified: 2026-03-17
+verified: 2026-03-18
 tags: [reservations, resy, gmail, automation]
 ---
 
@@ -67,10 +67,10 @@ graph LR
 
 ### Setup Flow
 
-The product surface for v1 is three user-facing screens:
+The product surface for v1 is one authenticated dashboard with three sections:
 
 1. `Connections` — connect Gmail, connect Resy, and reconnect either one
-2. `Watches` — create and manage flexible intent windows
+2. `Create Watch` plus the watch list — create and manage flexible intent windows
 3. `Activity Log` — success, failure, dedupe, and reconnect-required events
 
 ### Runtime Flow
@@ -80,12 +80,12 @@ The runtime path for v1 is intentionally narrow:
 1. Gmail push event arrives.
 2. Gmail message fetch retrieves the new Resy Notify email.
 3. Parser extracts venue, party size, date, time, and booking link details available in the email.
-4. Dedupe logic collapses repeated Gmail push events and repeated email deliveries into one logical alert.
+4. Dedupe logic collapses repeated Gmail push events and repeated email deliveries into one logical alert for the same user.
 5. Matcher compares the alert to active app-owned watches.
 6. Concurrency guard ensures only one active claim attempt exists per watch.
 7. Executor starts a short-lived Playwright run using encrypted saved auth state.
 8. Executor attempts the official Resy flow.
-9. Result is persisted and user-visible immediately.
+9. Result is persisted and surfaced immediately on the reservations page, with browser notifications when the page is open and permissions are granted.
 
 ## Goal
 
@@ -104,26 +104,26 @@ Ship a truthful, functioning, single-user demo that can automatically react to o
 
 ## Invariants
 
-| Rule                         | Constraint                                                                                                                 |
-| ---------------------------- | -------------------------------------------------------------------------------------------------------------------------- |
-| WATCH_INTENT_CANONICAL       | The app-owned watch definition is the source of truth for acceptable reservation windows.                                  |
-| OFFICIAL_ALERTS_ONLY         | V1 reacts only to official provider alerts delivered through Gmail, not scraped availability polling.                      |
-| GMAIL_PUSH_IS_TRIGGER        | Gmail push events are the low-latency ingestion trigger; email polling is fallback-only.                                   |
-| GMAIL_WATCH_RENEWAL_REQUIRED | Gmail watch registrations must be renewed before expiry or all affected watches must move into a reconnect-required state. |
-| WINDOW_BASED_MATCHING        | Matching is done against a user-defined date/time window plus hard and soft constraints, not a single exact slot.          |
-| NO_STANDING_BROWSER          | The system must never keep a logged-in browser open indefinitely waiting for alerts.                                       |
-| SHORT_LIVED_EXECUTOR         | Each booking attempt runs in a fresh, bounded browser execution and exits immediately after success or failure.            |
-| ENCRYPTED_SESSION_STATE      | Stored Resy session state must be encrypted at rest and never exposed in client storage.                                   |
-| REAUTH_IS_EXPLICIT           | Session expiry must surface a clean `Reconnect Resy` path instead of silent retries with broken auth.                      |
-| USER_AUTHORIZES_AUTO_CLAIM   | Auto-claim must be explicitly enabled on a watch; no implicit booking behavior is allowed.                                 |
-| EMAIL_EVENT_DEDUP            | Repeated Gmail push events and repeated copies of the same Resy email must collapse to one logical alert.                  |
-| CLAIM_ATTEMPT_IDEMPOTENT     | Retrying the same logical alert must not create duplicate independent claim attempts.                                      |
-| ONE_ACTIVE_CLAIM_PER_WATCH   | At most one claim attempt may run at a time for a given watch.                                                             |
-| RESY_ONLY_V1                 | V1 is Resy-specific. No generic provider abstraction is required until a second real provider exists.                      |
-| AUDIT_LOG_APPEND_ONLY        | Every important state transition must append a user-visible activity event.                                                |
-| IMMEDIATE_USER_NOTIFICATION  | Claim success, claim failure, reconnect-required, and Gmail-watch-expired states must notify the user immediately.         |
-| NO_MULTI_ACCOUNT_ABUSE       | V1 is for one real user account only: no account farming, no proxy rotation, no evasion, and no parallel claim spam.       |
-| NO_DEAD_ORCHESTRATION        | V1 must not ship workflow paths, internal endpoints, or background jobs that are not end-to-end runnable.                  |
+| Rule                         | Constraint                                                                                                                     |
+| ---------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
+| WATCH_INTENT_CANONICAL       | The app-owned watch definition is the source of truth for acceptable reservation windows.                                      |
+| OFFICIAL_ALERTS_ONLY         | V1 reacts only to official provider alerts delivered through Gmail, not scraped availability polling.                          |
+| GMAIL_PUSH_IS_TRIGGER        | Gmail push events are the low-latency ingestion trigger; email polling is fallback-only.                                       |
+| GMAIL_WATCH_RENEWAL_REQUIRED | Gmail watch registrations must be renewed before expiry or all affected watches must move into a reconnect-required state.     |
+| WINDOW_BASED_MATCHING        | Matching is done against a user-defined date/time window plus hard and soft constraints, not a single exact slot.              |
+| NO_STANDING_BROWSER          | The system must never keep a logged-in browser open indefinitely waiting for alerts.                                           |
+| SHORT_LIVED_EXECUTOR         | Each booking attempt runs in a fresh, bounded browser execution and exits immediately after success or failure.                |
+| ENCRYPTED_SESSION_STATE      | Stored Resy session state must be encrypted at rest and never exposed in client storage.                                       |
+| REAUTH_IS_EXPLICIT           | Session expiry must surface a clean `Reconnect Resy` path instead of silent retries with broken auth.                          |
+| USER_AUTHORIZES_AUTO_CLAIM   | Auto-claim must be explicitly enabled on a watch; no implicit booking behavior is allowed.                                     |
+| EMAIL_EVENT_DEDUP            | Repeated Gmail push events and repeated copies of the same Resy email must collapse to one logical alert for the same user.    |
+| CLAIM_ATTEMPT_IDEMPOTENT     | Retrying the same logical alert must not create duplicate independent claim attempts.                                          |
+| ONE_ACTIVE_CLAIM_PER_WATCH   | At most one claim attempt may run at a time for a given watch.                                                                 |
+| RESY_ONLY_V1                 | V1 is Resy-specific. No generic provider abstraction is required until a second real provider exists.                          |
+| AUDIT_LOG_APPEND_ONLY        | Every important state transition must append a user-visible activity event.                                                    |
+| IMMEDIATE_USER_NOTIFICATION  | Claim success, claim failure, reconnect-required, and Gmail attention states must surface immediately in the authenticated UI. |
+| NO_MULTI_ACCOUNT_ABUSE       | V1 is for one real user account only: no account farming, no proxy rotation, no evasion, and no parallel claim spam.           |
+| NO_DEAD_ORCHESTRATION        | V1 must not ship workflow paths, internal endpoints, or background jobs that are not end-to-end runnable.                      |
 
 ## Schema
 
@@ -168,13 +168,13 @@ The app owns the canonical watch object.
 
 ### Activity Event
 
-| Field        | Type      | Constraints | Description                                                                                                                                                                           |
-| ------------ | --------- | ----------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `event_type` | enum      | required    | `gmail_connected`, `resy_connected`, `watch_created`, `notify_confirmed`, `alert_received`, `alert_matched`, `claim_started`, `claim_succeeded`, `claim_failed`, `reconnect_required` |
-| `source`     | enum      | required    | `system`, `gmail`, `resy`, `executor`                                                                                                                                                 |
-| `dedupe_key` | string    | optional    | Stable key for collapsing duplicate email events or claim retries                                                                                                                     |
-| `payload`    | json      | optional    | Structured details for debugging and UX                                                                                                                                               |
-| `created_at` | timestamp | required    | Event time                                                                                                                                                                            |
+| Field        | Type      | Constraints | Description                                                                                                                                                                                                                |
+| ------------ | --------- | ----------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `event_type` | enum      | required    | `gmail_connected`, `gmail_watch_renewed`, `resy_connected`, `watch_created`, `alert_received`, `alert_deduped`, `alert_matched`, `alert_ignored`, `claim_started`, `claim_succeeded`, `claim_failed`, `reconnect_required` |
+| `source`     | enum      | required    | `system`, `gmail`, `resy`, `executor`                                                                                                                                                                                      |
+| `dedupe_key` | string    | optional    | Stable key for collapsing duplicate email events or claim retries                                                                                                                                                          |
+| `payload`    | json      | optional    | Structured details for debugging and UX                                                                                                                                                                                    |
+| `created_at` | timestamp | required    | Event time                                                                                                                                                                                                                 |
 
 ## Product Rules
 
@@ -205,7 +205,7 @@ The app owns the canonical watch object.
 - Duplicate email deliveries or duplicate push events must not create duplicate claim attempts.
 - Only one claim attempt may be active per watch at a time.
 - Failed auth, missing session state, or expired session must stop execution early and log a reconnect-required event.
-- Success, failure, and reconnect-required states must notify the user immediately.
+- Success, failure, and reconnect-required states must surface immediately in the reservations UI.
 
 ## Acceptance Checks
 
@@ -242,10 +242,10 @@ The app owns the canonical watch object.
 | `apps/web/src/core/reservations/`                                      | Window matching rules and domain types                      |
 | `apps/web/src/features/reservations/services/watch-manager.ts`         | Watch CRUD and status transitions                           |
 | `apps/web/src/features/reservations/services/gmail-alert-ingestion.ts` | Gmail-triggered alert fetch and parse orchestration         |
-| `apps/web/src/features/reservations/services/resy-auto-claim.ts`       | Match-to-execution orchestration                            |
+| `apps/web/src/features/reservations/services/connection-manager.ts`    | Gmail and Resy connection lifecycle orchestration           |
 | `apps/web/src/adapters/server/gmail/`                                  | Gmail OAuth, watch registration, and message fetch adapters |
 | `apps/web/src/adapters/server/reservations/`                           | Resy session handling and Playwright execution adapters     |
-| `apps/web/src/app/(app)/reservations/`                                 | Four-screen end-user UI                                     |
+| `apps/web/src/app/(app)/reservations/`                                 | Reservation dashboard UI                                    |
 | `apps/web/src/app/api/v1/reservations/`                                | Thin delivery routes over the v1 contracts                  |
 | `apps/web/src/adapters/server/db/migrations/`                          | Checked-in schema migrations for v1 tables                  |
 

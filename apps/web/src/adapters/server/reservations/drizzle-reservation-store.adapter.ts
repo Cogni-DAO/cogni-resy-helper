@@ -14,7 +14,7 @@ import type {
   ReservationConnectionStatus,
   WatchRequestStatus,
 } from "@cogni/db-schema/reservations";
-import { and, desc, eq } from "drizzle-orm";
+import { and, desc, eq, or } from "drizzle-orm";
 
 import type { Database } from "@/adapters/server/db/client";
 import type {
@@ -333,13 +333,14 @@ export class DrizzleReservationStoreAdapter implements ReservationStorePort {
   }
 
   async updateWatchRequestStatus(
+    userId: string,
     id: string,
     status: WatchRequestStatus
   ): Promise<WatchRequest> {
     const [row] = await this.db
       .update(watchRequests)
       .set({ status, updatedAt: new Date() })
-      .where(eq(watchRequests.id, id))
+      .where(and(eq(watchRequests.userId, userId), eq(watchRequests.id, id)))
       .returning();
 
     return mapWatchRequest(requireRow(row, "updateWatchRequestStatus"));
@@ -427,7 +428,22 @@ export class DrizzleReservationStoreAdapter implements ReservationStorePort {
         .select()
         .from(reservationAlertReceipts)
         .where(
-          eq(reservationAlertReceipts.logicalAlertKey, params.logicalAlertKey)
+          and(
+            eq(reservationAlertReceipts.userId, params.userId),
+            or(
+              eq(
+                reservationAlertReceipts.logicalAlertKey,
+                params.logicalAlertKey
+              ),
+              eq(reservationAlertReceipts.gmailDedupKey, params.gmailDedupKey),
+              params.gmailMessageId
+                ? eq(
+                    reservationAlertReceipts.gmailMessageId,
+                    params.gmailMessageId
+                  )
+                : undefined
+            )
+          )
         )
         .limit(1);
 

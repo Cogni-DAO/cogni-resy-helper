@@ -23,28 +23,40 @@ export const POST = wrapRouteHandlerWithLogging(
     }
 
     const container = getContainer();
-    const connection = await renewGmailWatch(sessionUser.id, {
-      store: container.reservationStore,
-      gmail: container.reservationGmail,
-      provider: container.reservationProvider,
-    });
+    try {
+      const connection = await renewGmailWatch(sessionUser.id, {
+        store: container.reservationStore,
+        gmail: container.reservationGmail,
+        provider: container.reservationProvider,
+      });
 
-    return NextResponse.json(
-      gmailRenewOperation.output.parse({
-        kind: "gmail",
-        id: connection.id,
-        status: connection.status,
-        provider: connection.provider,
-        providerAccountEmail: connection.providerAccountEmail,
-        providerSubject: connection.providerSubject,
-        tokenExpiresAt: connection.tokenExpiresAt?.toISOString() ?? null,
-        createdAt: connection.createdAt.toISOString(),
-        updatedAt: connection.updatedAt.toISOString(),
-        watchStatus: connection.watchStatus,
-        watchExpiryAt: connection.watchExpiryAt?.toISOString() ?? null,
-        renewalStatus: connection.renewalStatus,
-        historyCursor: connection.historyCursor,
-      })
-    );
+      return NextResponse.json(
+        gmailRenewOperation.output.parse({
+          kind: "gmail",
+          id: connection.id,
+          status: connection.status,
+          provider: connection.provider,
+          providerAccountEmail: connection.providerAccountEmail,
+          providerSubject: connection.providerSubject,
+          tokenExpiresAt: connection.tokenExpiresAt?.toISOString() ?? null,
+          createdAt: connection.createdAt.toISOString(),
+          updatedAt: connection.updatedAt.toISOString(),
+          watchStatus: connection.watchStatus,
+          watchExpiryAt: connection.watchExpiryAt?.toISOString() ?? null,
+          renewalStatus: connection.renewalStatus,
+          historyCursor: connection.historyCursor,
+        })
+      );
+    } catch (error) {
+      return NextResponse.json(
+        {
+          error:
+            error instanceof Error
+              ? error.message
+              : "Failed to renew Gmail watch.",
+        },
+        { status: 400 }
+      );
+    }
   }
 );
