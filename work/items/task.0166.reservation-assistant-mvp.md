@@ -12,8 +12,8 @@ spec_refs: reservation-assistant-v1
 assignees: claude
 credit:
 project:
-branch: claude/reservation-assistant-mvp-Sy4le
-pr:
+branch: feat/resy-v0
+pr: https://github.com/Cogni-DAO/cogni-resy-helper/pull/9
 reviewer:
 revision: 1
 blocked_by:
