@@ -259,10 +259,10 @@ jobs:
       APP_DB_SERVICE_USER: user_service
       APP_DB_SERVICE_PASSWORD: service_password
       # Database name
-      APP_DB_NAME: cogni_template_test
-      POSTGRES_DB: cogni_template_test
+      APP_DB_NAME: cogni_resy_helper_test
+      POSTGRES_DB: cogni_resy_helper_test
       # Image naming base (APP_IMAGE/MIGRATOR_IMAGE derived in step below)
-      IMAGE_NAME: cogni-template-ci
+      IMAGE_NAME: cogni-resy-helper-ci
       IMAGE_TAG: ${{ github.sha }}
       DOMAIN: localhost
       LITELLM_MASTER_KEY: test-key
@@ -292,8 +292,8 @@ jobs:
       TEMPORAL_TASK_QUEUE: scheduler-tasks
       # Container-side DSNs (postgres:5432 = Docker internal DNS)
       # These are passed to docker-compose for app, migrator, scheduler-worker containers
-      DATABASE_URL: postgresql://user:password@postgres:5432/cogni_template_test?sslmode=disable
-      DATABASE_SERVICE_URL: postgresql://user_service:service_password@postgres:5432/cogni_template_test?sslmode=disable
+      DATABASE_URL: postgresql://user:password@postgres:5432/cogni_resy_helper_test?sslmode=disable
+      DATABASE_SERVICE_URL: postgresql://user_service:service_password@postgres:5432/cogni_resy_helper_test?sslmode=disable
       # git-sync HTTPS clone (same path as prod — no file:// shortcut)
       COGNI_REPO_URL: https://github.com/${{ github.repository }}.git
       COGNI_REPO_REF: ${{ github.sha }}
@@ -445,8 +445,8 @@ jobs:
           COGNI_REPO_PATH: ${{ github.workspace }}
           # Host-side DSNs for vitest (override job-level container DSNs)
           # Vitest runs on host, connects via port-forwarded localhost:55432
-          DATABASE_URL: postgresql://user:password@localhost:55432/cogni_template_test
-          DATABASE_SERVICE_URL: postgresql://user_service:service_password@localhost:55432/cogni_template_test
+          DATABASE_URL: postgresql://user:password@localhost:55432/cogni_resy_helper_test
+          DATABASE_SERVICE_URL: postgresql://user_service:service_password@localhost:55432/cogni_resy_helper_test
           # TigerBeetle (host-side vitest, port-forwarded)
           TIGERBEETLE_ADDRESS: 127.0.0.1:3002
         # Note: wait-for-probes.ts globalSetup polls /livez then /readyz before tests run
