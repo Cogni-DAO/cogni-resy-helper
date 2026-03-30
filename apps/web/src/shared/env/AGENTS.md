@@ -103,6 +103,9 @@ Optional:
 - BILLING_INGEST_TOKEN (≥32 chars) - Bearer auth for LiteLLM callback → billing ingest endpoint
 - SCHEDULER_API_TOKEN (≥32 chars) - Bearer auth for scheduler-worker → internal graph execution API
 - INTERNAL_OPS_TOKEN (≥32 chars) - Bearer auth for deploy-time internal ops endpoints
+- GOOGLE_OAUTH_CLIENT_ID - Google OAuth client id for Gmail connection flow
+- GOOGLE_OAUTH_CLIENT_SECRET - Google OAuth client secret for Gmail connection flow
+- GMAIL_PUBSUB_TOPIC - Gmail watch Pub/Sub topic name
 - PROMETHEUS_REMOTE_WRITE_URL (url) - Grafana Cloud write endpoint (must end with /api/prom/push)
 - PROMETHEUS_QUERY_URL (url) - Explicit query endpoint (alternative to deriving from write URL)
 - PROMETHEUS_READ_USERNAME - Basic auth username for Prometheus queries (read path)

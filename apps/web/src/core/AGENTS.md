@@ -45,6 +45,7 @@ Pure domain logic with entities, rules, and business invariants. No I/O, time, o
   - Domain errors (InsufficientCreditsError, PaymentIntentExpiredError, PaymentVerificationError, etc.)
   - Utilities (USDC conversion, message builders, payment state checkers)
   - AI utilities (system prompt application, token estimation)
+  - Reservation entities and rules (watch requests, reservation connections, alert parser, matching and dedupe helpers)
   - Ledger domain (re-exported from `@cogni/attribution-ledger`): model types, `computeStatementItems()`, `buildReceiptMessage()`, error classes
 - **Files considered API:** public.ts, payments/public.ts, billing/public.ts, chat/public.ts, accounts/public.ts, attribution/public.ts
 

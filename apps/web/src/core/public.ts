@@ -68,7 +68,6 @@ export {
   usdToCredits,
 } from "./billing/pricing";
 export type {
-  Conversation,
   Message,
   MessageRole,
   MessageToolCall,
@@ -117,6 +116,13 @@ export {
 export type {
   BookingAttempt,
   BookingAttemptStatus,
+  GmailRenewalStatus,
+  GmailWatchStatus,
+  ReservationAlert,
+  ReservationAlertReceipt,
+  ReservationConnection,
+  ReservationConnectionStatus,
+  ReservationConnectionType,
   ReservationPlatform,
   WatchEvent,
   WatchEventSource,
@@ -127,9 +133,16 @@ export type {
 export {
   assertValidDateRange,
   assertValidPartySize,
+  assertValidTimeWindow,
+  buildLogicalAlertKey,
   InvalidDateRangeError,
   InvalidPartySizeError,
   InvalidStatusTransitionError,
+  InvalidTimeWindowError,
   isValidStatusTransition,
   isWatchable,
+  matchesWatch,
+  normalizeRestaurantName,
+  parseResyNotifyEmail,
+  timeStringToMinutes,
 } from "./reservations/public";

@@ -4,8 +4,8 @@
 /**
  * Module: `@bootstrap/container`
  * Purpose: Dependency injection container for application composition root with environment-based adapter selection.
- * Scope: Wire adapters to ports for runtime dependency injection. Provides webhookRegistrations for ingestion route. Does not handle request-scoped lifecycle.
- * Invariants: All ports wired; single container instance per process; config.unhandledErrorPolicy set by env; webhookRegistrations lazy-initialized.
+ * Scope: Wire adapters to ports for runtime dependency injection. Provides webhookRegistrations for ingestion route, Temporal WorkflowClient singleton. Does not handle request-scoped lifecycle.
+ * Invariants: All ports wired; single container instance per process; config.unhandledErrorPolicy set by env; webhookRegistrations lazy-initialized; Temporal connection singleton with race-safe init.
  * Side-effects: IO (initializes logger and emits startup log on first access)
  * Notes: LLM always uses LiteLlmAdapter; stack tests route to mock-openai-api. ContainerConfig controls wrapper behavior.
  * Links: Used by API routes and other entry points; configure adapters here for DI.
@@ -29,18 +29,25 @@ import { PrivyOperatorWalletAdapter } from "@cogni/operator-wallet/adapters/priv
 import type { ScheduleControlPort } from "@cogni/scheduler-core";
 import type { WorkItemQueryPort } from "@cogni/work-items";
 import { MarkdownWorkItemAdapter } from "@cogni/work-items/markdown";
+import {
+  Client as TemporalClient,
+  Connection as TemporalConnection,
+  type WorkflowClient,
+} from "@temporalio/client";
+import Redis from "ioredis";
 import type { Logger } from "pino";
 import {
   ALCHEMY_ADAPTER_VERSION,
   AlchemyWebhookNormalizer,
   type Database,
   DrizzleAiTelemetryAdapter,
+  DrizzleConnectionBrokerAdapter,
   DrizzleExecutionGrantUserAdapter,
   DrizzleExecutionGrantWorkerAdapter,
   DrizzleExecutionRequestAdapter,
   DrizzleGovernanceStatusAdapter,
+  DrizzleGraphRunAdapter,
   DrizzleReservationStoreAdapter,
-  DrizzleScheduleRunAdapter,
   DrizzleScheduleUserAdapter,
   DrizzleThreadPersistenceAdapter,
   EvmRpcOnChainVerifierAdapter,
@@ -51,6 +58,7 @@ import {
   LiteLlmAdapter,
   type MimirAdapterConfig,
   MimirMetricsAdapter,
+  RedisRunStreamAdapter,
   ResyProviderAdapter,
   SystemClock,
   TemporalScheduleControlAdapter,
@@ -60,7 +68,17 @@ import {
   ViemTreasuryAdapter,
 } from "@/adapters/server";
 import { ServiceDrizzleAccountService } from "@/adapters/server/accounts/drizzle.adapter";
+import {
+  AggregatingModelCatalog,
+  ProviderResolver,
+} from "@/adapters/server/ai/catalog";
+import {
+  CodexModelProvider,
+  OpenAiCompatibleModelProvider,
+  PlatformModelProvider,
+} from "@/adapters/server/ai/providers";
 import { getServiceDb } from "@/adapters/server/db/drizzle.service-client";
+import { GmailAdapter } from "@/adapters/server/gmail/gmail.adapter";
 import { ServiceDrizzlePaymentAttemptRepository } from "@/adapters/server/payments/drizzle-payment-attempt.adapter";
 import { OpenRouterFundingAdapter } from "@/adapters/server/treasury/openrouter-funding.adapter";
 import { SplitTreasurySettlementAdapter } from "@/adapters/server/treasury/split-treasury-settlement.adapter";
@@ -83,11 +101,15 @@ import type {
   AccountService,
   AiTelemetryPort,
   Clock,
+  ConnectionBrokerPort,
   DataSourceRegistration,
+  GmailIntegrationPort,
   GovernanceStatusPort,
   LangfusePort,
   LlmService,
   MetricsQueryPort,
+  ModelCatalogPort,
+  ModelProviderResolverPort,
   OnChainVerifier,
   OperatorWalletPort,
   PaymentAttemptServiceRepository,
@@ -95,6 +117,7 @@ import type {
   ProviderFundingPort,
   ReservationProviderPort,
   ReservationStorePort,
+  RunStreamPort,
   ServiceAccountService,
   ThreadPersistencePort,
   TreasuryReadPort,
@@ -104,7 +127,7 @@ import type {
   ExecutionGrantUserPort,
   ExecutionGrantWorkerPort,
   ExecutionRequestPort,
-  ScheduleRunRepository,
+  GraphRunRepository,
   ScheduleUserPort,
 } from "@/ports/server";
 import { initAnalytics, shutdownAnalytics } from "@/shared/analytics";
@@ -153,7 +176,7 @@ export interface Container {
   executionGrantPort: ExecutionGrantUserPort;
   executionGrantWorkerPort: ExecutionGrantWorkerPort;
   executionRequestPort: ExecutionRequestPort;
-  scheduleRunRepository: ScheduleRunRepository;
+  graphRunRepository: GraphRunRepository;
   scheduleManager: ScheduleUserPort;
   /** Metrics capability for AI tools - requires PROMETHEUS_URL to be configured */
   metricsCapability: MetricsCapability;
@@ -171,6 +194,8 @@ export interface Container {
   attributionStore: AttributionStore;
   /** Work item queries — reads from markdown files via WorkItemQueryPort */
   workItemQuery: WorkItemQueryPort;
+  /** Run event streaming — publish/subscribe via Redis Streams */
+  runStream: RunStreamPort;
   /** Webhook source registrations — normalizers for webhook ingestion */
   webhookRegistrations: ReadonlyMap<string, DataSourceRegistration>;
   /** Financial ledger — undefined when TIGERBEETLE_ADDRESS not set */
@@ -181,10 +206,18 @@ export interface Container {
   treasurySettlement: TreasurySettlementPort | undefined;
   /** Provider funding — undefined when OPENROUTER_API_KEY not set */
   providerFunding: ProviderFundingPort | undefined;
+  /** Connection broker — undefined when CONNECTIONS_ENCRYPTION_KEY not set */
+  connectionBroker: ConnectionBrokerPort | undefined;
+  /** Model catalog — aggregates all providers for model listing */
+  modelCatalog: ModelCatalogPort;
+  /** Provider resolver — resolves providerKey to ModelProviderPort for runtime dispatch */
+  providerResolver: ModelProviderResolverPort;
   /** Reservation store — watch requests, events, booking attempts */
   reservationStore: ReservationStorePort;
-  /** Reservation providers — platform-specific adapters (resy, opentable, etc.) */
-  reservationProviders: Map<string, ReservationProviderPort>;
+  /** Gmail integration for official alert ingestion */
+  reservationGmail: GmailIntegrationPort;
+  /** Resy executor for notify setup and claim attempts */
+  reservationProvider: ReservationProviderPort;
 }
 
 // Feature-specific dependency types
@@ -208,6 +241,12 @@ export type ActivityDeps = {
 
 // Module-level singleton
 let _container: Container | null = null;
+let _temporalConnection: TemporalConnection | null = null;
+let _workflowClient: WorkflowClient | null = null;
+let _workflowClientPromise: Promise<{
+  client: WorkflowClient;
+  taskQueue: string;
+}> | null = null;
 
 /**
  * Get the singleton container instance.
@@ -227,6 +266,45 @@ export function getContainer(): Container {
 export function resetContainer(): void {
   _container = null;
   _webhookRegistrations = null;
+  if (_temporalConnection) {
+    void _temporalConnection.close();
+  }
+  _temporalConnection = null;
+  _workflowClient = null;
+  _workflowClientPromise = null;
+}
+
+/**
+ * Get a process-wide Temporal WorkflowClient singleton + task queue.
+ * Avoids per-request Connection.connect() overhead on hot paths.
+ * Returns both client and taskQueue so callers never need serverEnv() directly.
+ */
+export async function getTemporalWorkflowClient(): Promise<{
+  client: WorkflowClient;
+  taskQueue: string;
+}> {
+  if (_workflowClient) {
+    return {
+      client: _workflowClient,
+      taskQueue: serverEnv().TEMPORAL_TASK_QUEUE,
+    };
+  }
+  if (!_workflowClientPromise) {
+    _workflowClientPromise = (async () => {
+      const env = serverEnv();
+      const connection = await TemporalConnection.connect({
+        address: env.TEMPORAL_ADDRESS,
+      });
+      const temporalClient = new TemporalClient({
+        connection,
+        namespace: env.TEMPORAL_NAMESPACE,
+      });
+      _temporalConnection = connection;
+      _workflowClient = temporalClient.workflow;
+      return { client: _workflowClient, taskQueue: env.TEMPORAL_TASK_QUEUE };
+    })();
+  }
+  return _workflowClientPromise;
 }
 
 /** Lazy singleton for webhook registrations (avoids import cost at container init). */
@@ -421,9 +499,9 @@ function createContainer(): Container {
     serviceDb,
     log.child({ component: "DrizzleExecutionGrantWorkerAdapter" })
   );
-  const scheduleRunRepository = new DrizzleScheduleRunAdapter(
+  const graphRunRepository = new DrizzleGraphRunAdapter(
     serviceDb,
-    log.child({ component: "DrizzleScheduleRunAdapter" })
+    log.child({ component: "DrizzleGraphRunAdapter" })
   );
 
   // Execution request port (not user-scoped — exempt from RLS)
@@ -539,6 +617,33 @@ function createContainer(): Container {
     );
   })();
 
+  // Connection broker — BYO-AI credential resolution
+  // Undefined when CONNECTIONS_ENCRYPTION_KEY not set
+  const connectionBroker: ConnectionBrokerPort | undefined = (() => {
+    if (!env.CONNECTIONS_ENCRYPTION_KEY) return undefined;
+    const keyBuf = Buffer.from(env.CONNECTIONS_ENCRYPTION_KEY, "hex");
+    if (keyBuf.length !== 32) {
+      log.warn(
+        "CONNECTIONS_ENCRYPTION_KEY must be 64 hex chars (32 bytes). BYO-AI disabled."
+      );
+      return undefined;
+    }
+    return new DrizzleConnectionBrokerAdapter({
+      db: db as unknown as import("drizzle-orm/node-postgres").NodePgDatabase,
+      encryptionKey: keyBuf,
+      encryptionKeyId: "v1",
+      log,
+    });
+  })();
+
+  // Redis client for run event streaming (ephemeral stream plane)
+  // Per REDIS_IS_STREAM_PLANE: only transient data, no durable state
+  const redisClient = new Redis(env.REDIS_URL, {
+    lazyConnect: true,
+    maxRetriesPerRequest: 3,
+  });
+  const runStream = new RedisRunStreamAdapter(redisClient);
+
   return {
     log,
     config,
@@ -560,7 +665,7 @@ function createContainer(): Container {
     executionGrantPort,
     executionGrantWorkerPort,
     executionRequestPort,
-    scheduleRunRepository,
+    graphRunRepository,
     scheduleManager,
     metricsCapability,
     webSearchCapability,
@@ -574,6 +679,7 @@ function createContainer(): Container {
     ),
     attributionStore: new DrizzleAttributionAdapter(serviceDb, getScopeId()),
     workItemQuery: new MarkdownWorkItemAdapter(env.COGNI_REPO_ROOT),
+    runStream,
     get webhookRegistrations() {
       return getWebhookRegistrations();
     },
@@ -583,10 +689,28 @@ function createContainer(): Container {
       ? new SplitTreasurySettlementAdapter(operatorWallet, USDC_TOKEN_ADDRESS)
       : undefined,
     providerFunding,
+    connectionBroker,
+    // Multi-provider model ports
+    ...(() => {
+      const platformProvider = new PlatformModelProvider(llmService);
+      const codexProvider = new CodexModelProvider();
+      const openAiCompatibleProvider = new OpenAiCompatibleModelProvider(
+        connectionBroker,
+        resolveAppDb
+      );
+      const providers = [
+        platformProvider,
+        codexProvider,
+        openAiCompatibleProvider,
+      ];
+      return {
+        modelCatalog: new AggregatingModelCatalog(providers),
+        providerResolver: new ProviderResolver(providers),
+      };
+    })(),
     reservationStore: new DrizzleReservationStoreAdapter(db),
-    reservationProviders: new Map<string, ReservationProviderPort>([
-      ["resy", new ResyProviderAdapter()],
-    ]),
+    reservationGmail: new GmailAdapter(),
+    reservationProvider: new ResyProviderAdapter(),
   };
 }
 
@@ -621,7 +745,7 @@ export type SchedulingDeps = Pick<
   | "scheduleControl"
   | "executionGrantPort"
   | "executionGrantWorkerPort"
-  | "scheduleRunRepository"
+  | "graphRunRepository"
   | "scheduleManager"
 >;
 
@@ -631,7 +755,7 @@ export function resolveSchedulingDeps(): SchedulingDeps {
     scheduleControl: container.scheduleControl,
     executionGrantPort: container.executionGrantPort,
     executionGrantWorkerPort: container.executionGrantWorkerPort,
-    scheduleRunRepository: container.scheduleRunRepository,
+    graphRunRepository: container.graphRunRepository,
     scheduleManager: container.scheduleManager,
   };
 }

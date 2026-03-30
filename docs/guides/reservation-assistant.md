@@ -1,210 +1,110 @@
 ---
 id: reservation-assistant-guide
 type: guide
-title: Reservation Assistant — Local Dev & Compliance Guide
+title: Reservation Assistant — Local Demo Guide
 status: draft
 trust: draft
-summary: Local development instructions, API usage, compliance guardrails, and risk notes for the reservation assistant MVP.
-read_when: Working on the reservation assistant feature or reviewing compliance.
+summary: Setup and operational notes for the single-user Gmail-triggered Resy auto-claim demo.
+read_when: Connecting Gmail, capturing Resy session state, or validating the reservation assistant loop locally.
 owner: claude
 created: 2026-03-16
+updated: 2026-03-18
 ---
 
-# Reservation Assistant — Local Dev & Compliance Guide
+# Reservation Assistant — Local Demo Guide
 
 > Work item: task.0166 | Branch: claude/reservation-assistant-mvp-Sy4le
 
-## Overview
+## What ships in v1
 
-Personal reservation assistant MVP for a single user. Monitors hard-to-book restaurants via official platform alerts and provides user-approved booking assistance through official channels.
+The MVP is a single-user, Resy-only loop:
 
-## Architecture
+1. Connect Gmail with Google OAuth
+2. Register a Gmail watch for low-latency push ingestion
+3. Capture a Resy browser session through a short-lived Playwright flow
+4. Create an app-owned watch window with `auto_claim`
+5. Ingest official Resy Notify emails from Gmail push
+6. De-dupe the alert, match it against the watch, and run one short-lived claim attempt
+7. Append every important transition to the reservation activity log
 
-```
-┌─────────────────────────────────────────────────────────┐
-│ API Routes (/api/v1/reservations/*)                     │
-│   watches/ — CRUD for watch requests                    │
-│   ingest/  — receive availability notifications         │
-│   watches/[id]/events/   — event timeline               │
-│   watches/[id]/bookings/ — booking attempts              │
-└──────────────┬──────────────────────────────────────────┘
-               │
-┌──────────────▼──────────────────────────────────────────┐
-│ Feature Service (watch-manager.ts)                       │
-│   createWatch → validate → store → setup provider alert │
-│   ingestAlert → store event → (signal Temporal workflow) │
-│   approveBooking → store → delegate to provider          │
-└──────────────┬──────────────────────────────────────────┘
-               │
-       ┌───────┴────────┐
-       │                │
-┌──────▼──────┐  ┌──────▼──────┐
-│ Store Port  │  │ Provider    │
-│ (Drizzle)   │  │ Port        │
-│             │  │ (Resy stub) │
-└─────────────┘  └─────────────┘
-```
+## Required Environment
 
-### Temporal Workflow (scheduler-worker)
+These settings must exist in the local environment before the Gmail flow will work:
 
-```
-ReservationWatchWorkflow
-  1. Setup alert → record "created" event
-  2. Wait for alertReceived signal (up to 30 days)
-  3. On alert → notify user, wait for approval (up to 1 hour)
-  4. On approval → launch booking assist via provider
-  5. Record all outcomes as watch_events
-```
+- `GOOGLE_OAUTH_CLIENT_ID`
+- `GOOGLE_OAUTH_CLIENT_SECRET`
+- `GMAIL_PUBSUB_TOPIC`
+- `INTERNAL_OPS_TOKEN`
 
-Signals: `alertReceived`, `userApproved`, `userDeclined`, `cancelWatch`
+The current implementation uses the existing auth/env setup for Google OAuth credentials and expects `GMAIL_PUBSUB_TOPIC` to point at the Pub/Sub topic that Gmail should publish watch notifications into.
 
-## Database Tables
-
-| Table              | Purpose                                              |
-| ------------------ | ---------------------------------------------------- |
-| `watch_requests`   | User-created monitoring entries for venue+date+party |
-| `watch_events`     | Immutable audit trail (append-only)                  |
-| `booking_attempts` | Records of user-approved booking assistance          |
-
-## Local Development
-
-### Prerequisites
-
-- Running Postgres (via `pnpm dev:stack` or `pnpm docker:dev:stack`)
-- Temporal server (included in dev stack)
-
-### Quick Start
+## Local Setup
 
 ```bash
-# 1. Start infrastructure
 pnpm dev:stack
-
-# 2. Run migrations (creates reservation tables)
 pnpm db:migrate
-
-# 3. Start dev server
 pnpm dev
 ```
 
-### API Endpoints
+Open [http://localhost:3000/reservations](http://localhost:3000/reservations) after signing in.
 
-```bash
-# Create a watch request
-curl -X POST http://localhost:3000/api/v1/reservations/watches \
-  -H "Content-Type: application/json" \
-  -d '{
-    "platform": "resy",
-    "venue": "Carbone",
-    "partySize": "2",
-    "dateStart": "2026-04-01T00:00:00Z",
-    "dateEnd": "2026-04-30T00:00:00Z",
-    "preferredTimeStart": "19:00",
-    "preferredTimeEnd": "21:00"
-  }'
+## Gmail Push Setup
 
-# List watches
-curl http://localhost:3000/api/v1/reservations/watches
+The app registers Gmail `users.watch` against the topic in `GMAIL_PUBSUB_TOPIC`.
 
-# Ingest an availability alert (from email forwarding, webhook, etc.)
-curl -X POST http://localhost:3000/api/v1/reservations/ingest \
-  -H "Content-Type: application/json" \
-  -d '{
-    "watchRequestId": "<uuid>",
-    "source": "manual",
-    "payload": {"message": "Table available at 7:30 PM on April 15"}
-  }'
+You still need a Pub/Sub push subscription that forwards topic deliveries to:
 
-# View event timeline
-curl http://localhost:3000/api/v1/reservations/watches/<id>/events
-
-# Approve booking (USER_APPROVAL_GATE)
-curl -X POST http://localhost:3000/api/v1/reservations/watches/<id>/bookings \
-  -H "Content-Type: application/json" \
-  -d '{
-    "sessionStatePath": "/path/to/browser-session.json",
-    "targetSlot": {"date": "2026-04-15", "time": "19:30"}
-  }'
-
-# List booking attempts
-curl http://localhost:3000/api/v1/reservations/watches/<id>/bookings
-
-# Pause/cancel a watch
-curl -X PATCH http://localhost:3000/api/v1/reservations/watches/<id>/status \
-  -H "Content-Type: application/json" \
-  -d '{"status": "paused"}'
+```text
+POST /api/v1/reservations/connections/gmail/push
+Authorization: Bearer $INTERNAL_OPS_TOKEN
 ```
 
-## Compliance Guardrails
+The push endpoint expects the standard Pub/Sub envelope where `message.data` is base64 JSON containing:
 
-### Hard Rules (MUST NOT violate)
+```json
+{
+  "emailAddress": "friend@example.com",
+  "historyId": "123456"
+}
+```
 
-| Rule                       | Description                                                                             |
-| -------------------------- | --------------------------------------------------------------------------------------- |
-| **NO_SCRAPING**            | Never scrape protected endpoints, bypass anti-bot systems, or rotate accounts           |
-| **USER_APPROVAL_GATE**     | Booking assist ONLY launches after explicit user approval via POST to bookings endpoint |
-| **OFFICIAL_CHANNELS_ONLY** | All platform interactions go through official UX/API paths                              |
-| **TERMS_COMPLIANT**        | Playwright usage limited to user-authorized, terms-compliant browser assistance         |
-| **AUDIT_TRAIL**            | Every state transition logged in `watch_events` with source attribution                 |
-| **NO_AUTO_PURCHASE**       | System never auto-purchases or sells reservations                                       |
-| **NO_DETECTION_EVASION**   | No proxy rotation, user-agent spoofing, or fingerprint evasion                          |
+## Resy Session Capture
 
-### Alert Ingestion — What IS Allowed
+The Resy connect button launches a short-lived Playwright browser on the machine running the app.
 
-- User forwards email notifications manually
-- User sets up email-to-webhook forwarding (e.g., Zapier/Make)
-- Platform sends webhook callbacks through official developer APIs
-- User pastes availability links manually via the ingest endpoint
-- User sets up Resy/OpenTable native notifications and manually triggers ingest
+- Complete the official Resy login flow in that browser window
+- The app stores encrypted Playwright storage state
+- Browsers are never kept standing after the capture completes
 
-### Alert Ingestion — What is NOT Allowed
+## Watch Behavior
 
-- Polling platform APIs on a timer
-- Scraping availability pages
-- Accessing undocumented/internal APIs
-- Using headless browsers to monitor pages
-- Any form of automated detection evasion
+Each watch is app-owned and canonical:
 
-### Booking Assist — What IS Allowed (after user approval)
+- `restaurant`
+- `partySize`
+- `dateStart` / `dateEnd` as inclusive UTC day bounds when created from date-only UI inputs
+- `timeStart` / `timeEnd`
+- `idealTime`
+- `autoClaim`
 
-- Opening the official platform booking page in a Playwright browser
-- Using the user's own stored, authenticated session state
-- Navigating the standard booking flow (select time → confirm → submit)
-- Capturing screenshots for audit trail
-- Single attempt per approval (no retry storms)
+Provider alerts are only signals. Matching is done against the app watch window, not exact provider slots stored elsewhere.
 
-### Booking Assist — What is NOT Allowed
+## Activity Events
 
-- Creating new accounts or sessions
-- Bypassing CAPTCHAs or verification challenges
-- Submitting forms faster than human speed
-- Multiple concurrent booking attempts
-- Any action the user hasn't explicitly approved
+The activity log records:
 
-## Risk Notes
+- Gmail connect / watch renewal
+- Resy connect
+- Alert received / de-duped / matched / ignored
+- Claim started / succeeded / failed
+- Reconnect-required transitions
 
-1. **Platform TOS**: Even terms-compliant browser automation may violate specific platform terms. The MVP stubs out Playwright booking to defer this risk. Full implementation requires legal review of each platform's TOS.
+The reservations page also surfaces these terminal states with an in-page notice and, when the browser allows it, a browser notification while the page is open.
 
-2. **Session State Security**: Stored browser session state files contain authentication cookies. These must be encrypted at rest and access-controlled. MVP assumes local filesystem; production needs encrypted storage.
+## Operational Notes
 
-3. **Rate Limiting**: The ingest endpoint should be rate-limited to prevent abuse. Current MVP relies on authentication but has no per-user rate limits.
-
-4. **Single User**: This MVP is designed for a single user. Multi-user support requires:
-   - Per-user session state isolation
-   - Rate limiting per user per platform
-   - Billing/credit gating
-
-5. **Temporal Workflow Lifetime**: Watch workflows can run up to 30 days. Ensure Temporal server retention is configured appropriately.
-
-## File Map
-
-| Path                                                                    | Purpose                            |
-| ----------------------------------------------------------------------- | ---------------------------------- |
-| `packages/db-schema/src/reservations.ts`                                | Database schema (3 tables)         |
-| `apps/web/src/core/reservations/`                                       | Domain types, rules, validation    |
-| `apps/web/src/ports/reservation.port.ts`                                | Port interfaces (store + provider) |
-| `apps/web/src/contracts/reservations.*.contract.ts`                     | API contracts (Zod schemas)        |
-| `apps/web/src/features/reservations/services/`                          | Feature service orchestration      |
-| `apps/web/src/adapters/server/reservations/`                            | Drizzle store + Resy provider      |
-| `apps/web/src/app/api/v1/reservations/`                                 | API routes                         |
-| `services/scheduler-worker/src/workflows/reservation-watch.workflow.ts` | Temporal workflow                  |
-| `services/scheduler-worker/src/activities/reservation.ts`               | Temporal activities                |
+- The Gmail push endpoint is protected by `INTERNAL_OPS_TOKEN` so the Pub/Sub subscription should send that bearer token.
+- Resy session expiry moves future claim attempts into reconnect-required behavior instead of silently retrying.
+- Claim concurrency is limited to one active claim attempt per watch.
+- Alert de-dupe is enforced per user across both Gmail-delivery keys and logical alert keys.
+- The Playwright claim path only navigates official Resy pages and uses saved authenticated session state.

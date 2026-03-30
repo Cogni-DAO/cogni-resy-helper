@@ -44,7 +44,7 @@ Vertical slices containing use cases like accounts/, ai/, and home/. Orchestrate
 
 ## Public Surface
 
-- **Exports:** accounts/services (admin ops), ai/services (completion), home/components (landing page), ingestion/services (webhook receiver), site-meta/services (route manifest)
+- **Exports:** accounts/services (admin ops), ai/services (completion), home/components (landing page), ingestion/services (webhook receiver), reservations/services (watch creation, Gmail ingestion orchestration, connection management), site-meta/services (route manifest)
 - **Routes (if any):** Feature-specific routes via app/
 - **Env/Config keys:** Feature-specific environment variables
 - **Files considered API:** actions.ts, index.ts, public components

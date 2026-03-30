@@ -41,13 +41,14 @@ Drizzle ORM table definitions for all database domains. Provides type-safe schem
 
 - **Exports (via subpath exports):**
   - `@cogni/db-schema/refs` - Core FK reference tables (`users`, `billingAccounts`)
-  - `@cogni/db-schema/scheduling` - Scheduling tables (`executionGrants`, `schedules`, `scheduleRuns`, `executionRequests`, `SCHEDULE_RUN_STATUSES`)
+  - `@cogni/db-schema/scheduling` - Scheduling tables (`executionGrants`, `schedules`, `graphRuns` (canonical, `scheduleRuns` deprecated alias), `executionRequests`, `GRAPH_RUN_STATUSES`, `GRAPH_RUN_KINDS`)
   - `@cogni/db-schema/auth` - Auth tables
   - `@cogni/db-schema/billing` - Billing tables
   - `@cogni/db-schema/ai` - AI-related tables
   - `@cogni/db-schema/ai-threads` - Thread persistence table (UIMessage[] JSONB, RLS, optimistic concurrency)
   - `@cogni/db-schema/identity` - Identity binding tables (`userBindings`, `linkTransactions`, `identityEvents`)
   - `@cogni/db-schema/attribution` - Attribution pipeline tables (`epochs`, `ingestionReceipts`, `epochSelection`, `epochReceiptClaimants`, `epochUserProjections`, `epochReviewSubjectOverrides`, `epochFinalClaimantAllocations`, `ingestionCursors`, `epochPoolComponents`, `epochStatements`, `epochStatementSignatures`)
+  - `@cogni/db-schema/reservations` - Reservation assistant tables (`reservationConnections`, `watchRequests`, `reservationAlertReceipts`, `watchEvents`, `bookingAttempts`)
 - **Files considered API:** All `src/*.ts` files via package.json exports
 
 ## Ports
