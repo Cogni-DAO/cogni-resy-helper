@@ -48,7 +48,6 @@ import {
   DrizzleGovernanceStatusAdapter,
   DrizzleGraphRunAdapter,
   DrizzleReservationStoreAdapter,
-  DrizzleScheduleRunAdapter,
   DrizzleScheduleUserAdapter,
   DrizzleThreadPersistenceAdapter,
   EvmRpcOnChainVerifierAdapter,

@@ -22,9 +22,8 @@ import {
   proxyActivities,
   setHandler,
 } from "@temporalio/workflow";
-
-import type { ReservationActivities } from "../activity-types.js";
 import { STANDARD_ACTIVITY_OPTIONS } from "../activity-profiles.js";
+import type { ReservationActivities } from "../activity-types.js";
 
 /* ─── Signals ─────────────────────────────────────────────────────── */
 
