@@ -4,7 +4,7 @@
 /**
  * Module: `@cogni/scheduler-worker-service/workflows/reservation-watch`
  * Purpose: Temporal Workflow for reservation watch request lifecycle.
- * Scope: Deterministic orchestration only. All I/O happens in Activities.
+ * Scope: Deterministic orchestration only. All I/O happens in Activities. Does not perform database or network calls directly.
  * Invariants:
  * - Per TEMPORAL_DETERMINISM: No I/O, network calls in workflow code
  * - USER_APPROVAL_GATE: Booking assist only after explicit approval signal
