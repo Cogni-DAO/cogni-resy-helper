@@ -8,35 +8,45 @@
  * Invariants:
  *   - Facade NEVER imports adapters directly (use this factory)
  *   - Per UNIFIED_GRAPH_EXECUTOR: all graph execution flows through GraphExecutorPort
- *   - Per PROVIDER_AGGREGATION: AggregatingGraphExecutor routes to providers
+ *   - Per ROUTING_BY_NAMESPACE_ONLY: NamespaceGraphRouter routes by graphId prefix via Map
  *   - Per LANGFUSE_INTEGRATION: ObservabilityGraphExecutorDecorator wraps for Langfuse traces
- *   - Per CALLBACK_IS_SOLE_WRITER: BillingGraphExecutorDecorator validates usage_report events (receipt writes via LiteLLM callback)
+ *   - Per CALLBACK_WRITES_PLATFORM_RECEIPTS: UsageCommitDecorator validates usage_report events. Platform receipts via LiteLLM callback; BYO receipts committed directly.
  *   - Per CREDITS_ENFORCED_AT_EXECUTION_PORT: PreflightCreditCheckDecorator rejects runs with insufficient credits
  *   - LAZY_SANDBOX_IMPORT: Sandbox provider loaded via dynamic import() to defer dockerode native addon chain (SandboxRunnerAdapter)
  * Side-effects: global (module-scoped cached sandbox provider promise)
- * Links: container.ts, AggregatingGraphExecutor, GRAPH_EXECUTION.md, OBSERVABILITY.md
+ * Links: container.ts, NamespaceGraphRouter, GRAPH_EXECUTION.md, OBSERVABILITY.md
  * @public
  */
 
+import type { SourceSystem } from "@cogni/ai-core";
+import type {
+  ExecutionContext,
+  GraphFinal,
+  GraphRunRequest,
+  GraphRunResult,
+} from "@cogni/graph-execution-core";
 import type { UserId } from "@cogni/ids";
 import { LANGGRAPH_CATALOG } from "@cogni/langgraph-graphs";
 import {
-  AggregatingGraphExecutor,
-  BillingGraphExecutorDecorator,
+  BillingEnrichmentGraphExecutorDecorator,
   type CompletionStreamFn,
   createLangGraphDevClient,
-  type GraphProvider,
   InProcCompletionUnitAdapter,
   LangGraphDevProvider,
   LangGraphInProcProvider,
+  NamespaceGraphRouter,
   ObservabilityGraphExecutorDecorator,
   PreflightCreditCheckDecorator,
+  UsageCommitDecorator,
 } from "@/adapters/server";
+import { runInScope } from "@/adapters/server/ai/execution-scope";
 import type {
   AiExecutionErrorCode,
+  BillingContext,
+  ConnectionBrokerPort,
   GraphExecutorPort,
-  GraphRunRequest,
-  GraphRunResult,
+  LlmService,
+  ModelProviderResolverPort,
   PreflightCreditCheckFn,
 } from "@/ports";
 import { serverEnv } from "@/shared/env";
@@ -47,30 +57,27 @@ import {
 } from "./container";
 
 /**
- * Factory for creating AggregatingGraphExecutor with all configured providers.
+ * Factory for creating NamespaceGraphRouter with all configured providers.
  * Per UNIFIED_GRAPH_EXECUTOR: all graph execution flows through GraphExecutorPort.
- * Per PROVIDER_AGGREGATION: AggregatingGraphExecutor routes by graphId to providers.
+ * Per ROUTING_BY_NAMESPACE_ONLY: NamespaceGraphRouter routes by graphId namespace via Map.
  * Per CATALOG_SINGLE_SOURCE_OF_TRUTH: Provider imports catalog from @cogni/langgraph-graphs.
  * Per MUTUAL_EXCLUSION: Register exactly one langgraph provider (InProc XOR Dev) based on env.
  *
  * Architecture boundary: Facade calls this factory (app → bootstrap),
- * factory creates aggregator (bootstrap → adapters). Facade never imports adapters.
+ * factory creates router (bootstrap → adapters). Facade never imports adapters.
  *
- * Decorator stack (outer → inner):
- *   ObservabilityGraphExecutorDecorator → PreflightCreditCheckDecorator → BillingGraphExecutorDecorator → AggregatingGraphExecutor
+ * Static inner executor:
+ *   NamespaceGraphRouter
  *
  * @param completionStreamFn - Feature function for LLM streaming (from features/ai)
  * @param userId - User ID for adapter dependency resolution
- * @param preflightCheckFn - Required preflight credit check function (created in app layer as closure)
- * @returns GraphExecutorPort implementation with observability + preflight + billing validation
+ * @returns GraphExecutorPort implementation with routing only
  */
 export function createGraphExecutor(
   completionStreamFn: CompletionStreamFn,
-  userId: UserId,
-  preflightCheckFn: PreflightCreditCheckFn
+  userId: UserId
 ): GraphExecutorPort {
   const deps = resolveAiAdapterDeps(userId);
-  const container = getContainer();
 
   // Per MUTUAL_EXCLUSION: choose provider based on LANGGRAPH_DEV_URL env
   const devUrl = serverEnv().LANGGRAPH_DEV_URL;
@@ -78,43 +85,208 @@ export function createGraphExecutor(
     ? createDevProvider(devUrl)
     : createInProcProvider(deps, completionStreamFn);
 
-  // Build providers array: langgraph + sandbox
+  // Build namespace → provider map
   const env = serverEnv();
-  const providers: GraphProvider[] = [
-    langGraphProvider,
-    new LazySandboxGraphProvider(
-      env.LITELLM_MASTER_KEY,
-      env.OPENCLAW_GATEWAY_URL,
-      env.OPENCLAW_GATEWAY_TOKEN
-    ),
-  ];
+  const providers = new Map<string, GraphExecutorPort>([
+    [langGraphProvider.providerId, langGraphProvider],
+    [
+      "sandbox",
+      new LazySandboxGraphProvider(
+        env.LITELLM_MASTER_KEY,
+        env.OPENCLAW_GATEWAY_URL,
+        env.OPENCLAW_GATEWAY_TOKEN
+      ),
+    ],
+  ]);
 
-  // Create aggregating executor with all configured providers
-  const aggregator = new AggregatingGraphExecutor(providers);
+  // Create namespace router with all configured providers
+  const router = new NamespaceGraphRouter(providers);
 
-  // Wrap with billing validation decorator (intercepts + validates usage_report events)
-  // Per CALLBACK_IS_SOLE_WRITER: decorator validates only; LiteLLM callback writes receipts
-  const billed = new BillingGraphExecutorDecorator(aggregator, container.log);
+  return router;
+}
 
-  // Wrap with preflight credit check (rejects runs with insufficient credits)
-  // Per CREDITS_ENFORCED_AT_EXECUTION_PORT: all execution paths get credit check automatically
+/**
+ * Compose a per-run scoped executor.
+ *
+ * Bootstrap owns per-run wrapper composition so launchers do not construct ad hoc
+ * scoped executors in facades or routes.
+ *
+ * Provider resolution happens here: the ModelProviderResolverPort resolves the
+ * LlmService from req.modelRef BEFORE execution starts. No more llmServiceOverride
+ * via AsyncLocalStorage — the resolved LlmService is set on the execution scope.
+ */
+export function createScopedGraphExecutor(params: {
+  readonly executor: GraphExecutorPort;
+  readonly billing: BillingContext;
+  readonly preflightCheckFn: PreflightCreditCheckFn;
+  readonly commitByoUsage: import("@/adapters/server/ai/usage-commit.decorator").CommitUsageFactFn;
+  readonly abortSignal?: AbortSignal;
+  readonly broker?: ConnectionBrokerPort;
+  readonly resolver: ModelProviderResolverPort;
+  readonly actorId: string;
+}): GraphExecutorPort {
+  const container = getContainer();
+
+  const enriched = new BillingEnrichmentGraphExecutorDecorator(
+    params.executor,
+    params.billing
+  );
+
+  // Validate usage_report events; commit BYO receipts directly, defer platform to callback.
+  const billed = new UsageCommitDecorator(
+    enriched,
+    container.log,
+    params.commitByoUsage
+  );
+
+  // Wrap with preflight credit check — uses provider resolver for billing policy
   const preflighted = new PreflightCreditCheckDecorator(
     billed,
-    preflightCheckFn,
+    params.preflightCheckFn,
+    params.billing.billingAccountId,
+    params.resolver,
     container.log
   );
 
   // Wrap with observability decorator for Langfuse traces (outermost)
-  // Per OBSERVABILITY.md#langfuse-integration: creates trace with I/O, handles terminal states
-  // Note: Observability doesn't need usage_report events — billing consumes them before this layer
-  const decorated = new ObservabilityGraphExecutorDecorator(
+  const observed = new ObservabilityGraphExecutorDecorator(
     preflighted,
     container.langfuse,
     { finalizationTimeoutMs: 15_000 },
-    container.log
+    container.log,
+    params.billing.billingAccountId
   );
 
-  return decorated;
+  return {
+    runGraph(req: GraphRunRequest, ctx?: ExecutionContext): GraphRunResult {
+      // Resolve LlmService from provider BEFORE execution
+      const provider = params.resolver.resolve(req.modelRef.providerKey);
+
+      // Fail fast: connection-required providers must have connectionId + broker
+      if (provider.requiresConnection) {
+        if (!req.modelRef.connectionId) {
+          throw new Error(
+            `Provider "${req.modelRef.providerKey}" requires a connection but modelRef.connectionId is missing. ` +
+              `Ensure the model picker sends connectionId and the status endpoint returns it.`
+          );
+        }
+        if (!params.broker) {
+          throw new Error(
+            `Provider "${req.modelRef.providerKey}" requires a connection but ConnectionBroker is not configured. ` +
+              `Set CONNECTIONS_ENCRYPTION_KEY to enable BYO-AI.`
+          );
+        }
+      }
+
+      if (
+        provider.requiresConnection &&
+        req.modelRef.connectionId &&
+        params.broker
+      ) {
+        // BYO path: resolve credentials async, then run graph with provider's LlmService.
+        const broker = params.broker;
+        const connectionId = req.modelRef.connectionId;
+        let innerResult: GraphRunResult | undefined;
+        let resolveOuterFinal: ((v: GraphFinal) => void) | undefined;
+        const outerFinal = new Promise<GraphFinal>((r) => {
+          resolveOuterFinal = r;
+        });
+
+        const stream = (async function* () {
+          let llmService: LlmService;
+          try {
+            const connection = await broker.resolve(connectionId, {
+              actorId: params.actorId,
+              tenantId: params.billing.billingAccountId,
+            });
+            llmService = provider.createLlmService(connection);
+          } catch (err) {
+            container.log.error(
+              {
+                connectionId,
+                error: err instanceof Error ? err.message : String(err),
+              },
+              "Connection resolution failed"
+            );
+            yield {
+              type: "error" as const,
+              error:
+                "internal" as import("@cogni/ai-core").AiExecutionErrorCode,
+            };
+            yield { type: "done" as const };
+            // biome-ignore lint/style/noNonNullAssertion: assigned synchronously in Promise constructor
+            resolveOuterFinal!({
+              ok: false,
+              runId: req.runId,
+              requestId: ctx?.requestId ?? req.runId,
+              error:
+                "internal" as import("@cogni/ai-core").AiExecutionErrorCode,
+            });
+            return;
+          }
+
+          innerResult = runGraphWithScope({
+            executor: observed,
+            req,
+            ...(ctx ? { ctx } : {}),
+            billing: params.billing,
+            llmService,
+            usageSource: provider.usageSource,
+            ...(params.abortSignal ? { abortSignal: params.abortSignal } : {}),
+          });
+
+          yield* innerResult.stream;
+          const f = await innerResult.final;
+          // biome-ignore lint/style/noNonNullAssertion: assigned synchronously in Promise constructor
+          resolveOuterFinal!(f);
+        })();
+
+        return { stream, final: outerFinal };
+      }
+
+      // Standard path: use provider's LlmService (no connection needed)
+      const llmService = provider.createLlmService();
+      return runGraphWithScope({
+        executor: observed,
+        req,
+        ...(ctx ? { ctx } : {}),
+        billing: params.billing,
+        llmService,
+        usageSource: provider.usageSource,
+        ...(params.abortSignal ? { abortSignal: params.abortSignal } : {}),
+      });
+    },
+  };
+}
+
+/**
+ * Run a graph within an execution scope.
+ *
+ * This is the ONLY app-local launch entrypoint. Every launcher (chat, schedule,
+ * webhook, review) calls this — never executor.runGraph() directly.
+ *
+ * Sets AsyncLocalStorage scope so static inner providers can read billing context
+ * and the resolved LlmService.
+ */
+export function runGraphWithScope(params: {
+  readonly executor: GraphExecutorPort;
+  readonly req: GraphRunRequest;
+  readonly ctx?: ExecutionContext;
+  readonly billing: BillingContext;
+  readonly llmService: LlmService;
+  readonly usageSource: SourceSystem;
+  readonly abortSignal?: AbortSignal;
+}): GraphRunResult {
+  const { executor, req, ctx, billing, llmService, usageSource } = params;
+  return runInScope(
+    {
+      billing,
+      llmService,
+      usageSource,
+      ...(params.abortSignal ? { abortSignal: params.abortSignal } : {}),
+    },
+    () => executor.runGraph(req, ctx)
+  );
 }
 
 /**
@@ -148,13 +320,13 @@ function createDevProvider(apiUrl: string): LangGraphDevProvider {
 // ---------------------------------------------------------------------------
 
 /** Module-scoped singleton: caches the dynamic import + provider construction */
-let _sandboxProvider: Promise<GraphProvider> | null = null;
+let _sandboxProvider: Promise<GraphExecutorPort> | null = null;
 
 function loadSandboxProvider(
   litellmMasterKey: string,
   gatewayUrl: string,
   gatewayToken: string
-): Promise<GraphProvider> {
+): Promise<GraphExecutorPort> {
   if (!_sandboxProvider) {
     _sandboxProvider = import("@/adapters/server/sandbox").then(
       ({
@@ -171,7 +343,10 @@ function loadSandboxProvider(
           gatewayToken
         );
 
-        return new SandboxGraphProvider(runner, gatewayClient) as GraphProvider;
+        return new SandboxGraphProvider(
+          runner,
+          gatewayClient
+        ) as GraphExecutorPort;
       }
     );
   }
@@ -179,18 +354,16 @@ function loadSandboxProvider(
 }
 
 /**
- * GraphProvider that lazy-loads SandboxGraphProvider on first use.
+ * GraphExecutorPort that lazy-loads SandboxGraphProvider on first use.
  *
  * Avoids top-level import of dockerode → ssh2 → cpu-features (native addon)
  * which breaks Turbopack bundling when the barrel re-exports it.
  *
- * canHandle() is sync (prefix check only).
- * runGraph() returns {stream, final} synchronously; the async generator
- * inside awaits the cached import before delegating.
+ * Per LAZY_SANDBOX_IMPORT: runGraph() returns {stream, final} synchronously;
+ * the async generator inside awaits the cached import before delegating.
  */
-class LazySandboxGraphProvider implements GraphProvider {
-  readonly providerId = "sandbox";
-  private readonly delegate: Promise<GraphProvider>;
+class LazySandboxGraphProvider implements GraphExecutorPort {
+  private readonly delegate: Promise<GraphExecutorPort>;
 
   constructor(
     litellmMasterKey: string,
@@ -204,15 +377,11 @@ class LazySandboxGraphProvider implements GraphProvider {
     );
   }
 
-  canHandle(graphId: string): boolean {
-    return graphId.startsWith(`${this.providerId}:`);
-  }
-
-  runGraph(req: GraphRunRequest): GraphRunResult {
+  runGraph(req: GraphRunRequest, ctx?: ExecutionContext): GraphRunResult {
     const delegate = this.delegate;
 
     // Shared promise: resolves to delegate's runGraph result once module loads
-    const innerResult = delegate.then((p) => p.runGraph(req));
+    const innerResult = delegate.then((p) => p.runGraph(req, ctx));
 
     const stream = (async function* () {
       let inner: GraphRunResult;
@@ -235,7 +404,7 @@ class LazySandboxGraphProvider implements GraphProvider {
         ({
           ok: false,
           runId: req.runId,
-          requestId: req.ingressRequestId,
+          requestId: ctx?.requestId ?? req.runId,
           error: "internal",
         }) as const
     );
