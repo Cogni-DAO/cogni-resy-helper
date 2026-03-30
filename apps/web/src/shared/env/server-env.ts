@@ -192,6 +192,11 @@ export const serverSchema = z.object({
   // Required for research graph web search capability
   TAVILY_API_KEY: z.string().min(1).optional(),
 
+  // Redis (stream plane — ephemeral only)
+  // Per unified-graph-launch spec: REDIS_IS_STREAM_PLANE
+  // Default: localhost for host-mode dev; docker-compose overrides to redis://redis:6379
+  REDIS_URL: z.string().url().default("redis://localhost:6379"),
+
   // Temporal (Schedule orchestration) - Required
   // Per SCHEDULER_SPEC.md: Temporal is required infrastructure, no fallback
   // Start Temporal with: pnpm dev:infra
@@ -237,6 +242,10 @@ export const serverSchema = z.object({
   // OpenRouter crypto payment fee (0–1, default 0.05 = 5%)
   // Per web3-openrouter-payments spec: Coinbase Commerce protocol fee.
   OPENROUTER_CRYPTO_FEE: z.coerce.number().min(0).max(1).default(0.05),
+
+  // BYO-AI: AEAD encryption key for connections table (hex-encoded 32 bytes)
+  // Optional — BYO-AI features disabled when not set.
+  CONNECTIONS_ENCRYPTION_KEY: optionalString,
 
   // PostHog product analytics — required
   // See docs/guides/posthog-setup.md for setup
