@@ -137,6 +137,10 @@ packages/steel-browser/
 - `packages/db-schema/src/reservations.ts` — add `session_lease_until` column
 - Migration: `0029_steel_session_lease.sql`
 - `pnpm-workspace.yaml` — add `packages/steel-browser`
+- `docs/spec/reservation-assistant-v1.md` — update Resy Session schema + ENCRYPTED_SESSION_STATE invariant
+- `apps/web/src/features/reservations/services/gmail-alert-ingestion.ts` — update `attemptBooking` call to use `profileKey`
+- `services/scheduler-worker/src/activities/reservation.ts` — update `BookingAssistParams` construction
+- `apps/web/tests/unit/features/reservations/*.test.ts` — update fixtures for new port interface
 
 ### Out of Scope
 
