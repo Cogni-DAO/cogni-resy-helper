@@ -80,8 +80,6 @@ import {
 import { getServiceDb } from "@/adapters/server/db/drizzle.service-client";
 import { GmailAdapter } from "@/adapters/server/gmail/gmail.adapter";
 import { ServiceDrizzlePaymentAttemptRepository } from "@/adapters/server/payments/drizzle-payment-attempt.adapter";
-import { DrizzleReservationStoreAdapter } from "@/adapters/server/reservations/drizzle-reservation-store.adapter";
-import { ResyProviderAdapter } from "@/adapters/server/reservations/resy-provider.adapter";
 import { OpenRouterFundingAdapter } from "@/adapters/server/treasury/openrouter-funding.adapter";
 import { SplitTreasurySettlementAdapter } from "@/adapters/server/treasury/split-treasury-settlement.adapter";
 import {

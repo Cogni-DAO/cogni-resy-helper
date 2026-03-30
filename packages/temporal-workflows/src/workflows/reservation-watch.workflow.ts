@@ -140,7 +140,8 @@ export async function ReservationWatchWorkflow(
     return;
   }
 
-  const resolvedAlertPayload = alertPayload;
+  // Signal handlers mutate alertPayload in closures — TS control flow can't track this.
+  const resolvedAlertPayload = alertPayload as unknown as AlertPayload;
   if (!resolvedAlertPayload) {
     throw new Error("Alert payload missing after alert condition resolved");
   }
@@ -190,7 +191,9 @@ export async function ReservationWatchWorkflow(
     return;
   }
 
-  const resolvedApprovalPayload = approvalPayload;
+  // Signal handlers mutate approvalPayload in closures — TS control flow can't track this.
+  const resolvedApprovalPayload =
+    approvalPayload as unknown as BookingApprovalPayload;
   if (!resolvedApprovalPayload) {
     throw new Error(
       "Approval payload missing after approval condition resolved"
