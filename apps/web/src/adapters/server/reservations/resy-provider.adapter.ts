@@ -3,16 +3,15 @@
 
 /**
  * Module: `@adapters/server/reservations/resy-provider`
- * Purpose: Official Resy browser automation adapter for session capture and claim attempts.
- * Scope: Uses Playwright against official Resy pages only.
- * Side-effects: IO
+ * Purpose: Official Resy browser automation adapter for session verification and claim attempts.
+ * Scope: Uses Playwright over CDP to Steel-managed browsers. Does not launch local Chromium.
+ * Invariants: NO_STANDING_BROWSER — sessions created on-demand and released in finally blocks. SHORT_LIVED_EXECUTOR — 15 minute max.
+ * Side-effects: IO (Steel REST API, Playwright CDP)
  * @public
  */
 
-import { mkdtemp, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-
+import type { SteelSessionPort } from "@cogni/steel-browser";
+import { SteelUnavailableError } from "@cogni/steel-browser";
 import { chromium, type Page } from "@playwright/test";
 
 import type {
@@ -23,54 +22,26 @@ import type {
   SessionCaptureResult,
   WatchRequest,
 } from "@/ports";
-import {
-  decryptSecret,
-  encryptSecret,
-  isReconnectRequiredPage,
-} from "./session-crypto";
 
-type PlaywrightStorageState = {
-  cookies: Array<{
-    name: string;
-    value: string;
-    domain: string;
-    path: string;
-    expires: number;
-    httpOnly: boolean;
-    secure: boolean;
-    sameSite: "Strict" | "Lax" | "None";
-  }>;
-  origins: Array<{
-    origin: string;
-    localStorage: Array<{
-      name: string;
-      value: string;
-    }>;
-  }>;
-};
-
-async function isAuthenticatedResySession(
-  page: Page,
-  storageState: PlaywrightStorageState
-): Promise<boolean> {
-  if (await isReconnectRequiredPage(page)) {
-    return false;
-  }
-
+async function isAuthenticatedResyPage(page: Page): Promise<boolean> {
   const content = await page.content();
   if (/(log out|sign out|my resy|account|profile)/i.test(content)) {
     return true;
   }
-
-  return storageState.cookies.some(
-    (cookie) =>
-      cookie.domain.includes("resy.com") &&
-      /(auth|session|token|user)/i.test(cookie.name)
+  // Check for auth-related cookies via CDP
+  const client = await page.context().newCDPSession(page);
+  const { cookies } = await client.send("Network.getCookies", {
+    urls: ["https://resy.com"],
+  });
+  return cookies.some((c: { name: string }) =>
+    /(auth|session|token|user)/i.test(c.name)
   );
 }
 
 export class ResyProviderAdapter implements ReservationProviderPort {
   readonly platformId = "resy" as const;
+
+  constructor(private readonly steel?: SteelSessionPort) {}
 
   buildNotifySetup(watch: WatchRequest): AlertSetupResult {
     const slug =
@@ -85,65 +56,57 @@ export class ResyProviderAdapter implements ReservationProviderPort {
     };
   }
 
-  async captureSession(params?: {
+  async captureSession(_params?: {
     startUrl?: string | undefined;
   }): Promise<SessionCaptureResult> {
-    const browser = await chromium.launch({ headless: false });
-    const context = await browser.newContext();
-    const page = await context.newPage();
-
-    try {
-      await page.goto(params?.startUrl ?? "https://resy.com", {
-        waitUntil: "domcontentloaded",
-      });
-
-      const deadline = Date.now() + 5 * 60_000;
-
-      while (Date.now() < deadline) {
-        const storageState =
-          (await context.storageState()) as PlaywrightStorageState;
-        if (await isAuthenticatedResySession(page, storageState)) {
-          const encrypted = encryptSecret(JSON.stringify(storageState));
-          return {
-            sessionStateCiphertext: encrypted,
-            sessionStatus: "connected",
-            lastVerifiedAt: new Date(),
-            expiresHintAt: null,
-          };
-        }
-        await page.waitForTimeout(1000);
-      }
-
-      return {
-        sessionStateCiphertext: "",
-        sessionStatus: "error",
-        lastVerifiedAt: null,
-        expiresHintAt: null,
-      };
-    } finally {
-      await context.close();
-      await browser.close();
-    }
+    // With Steel, captureSession is a no-op — the actual auth happens in the
+    // Steel debug browser via startResyConnection/captureResyConnection in
+    // connection-manager.ts. This method exists for port compatibility.
+    return {
+      profileKey: undefined,
+      sessionStateCiphertext: undefined,
+      sessionStatus: "connected",
+      lastVerifiedAt: new Date(),
+      expiresHintAt: null,
+    };
   }
 
   async attemptBooking(
     params: BookingAssistParams
   ): Promise<BookingAssistResult> {
-    const stateJson = decryptSecret(params.sessionStateCiphertext);
-    const state = JSON.parse(stateJson) as PlaywrightStorageState;
+    if (!this.steel) {
+      return {
+        success: false,
+        error: "Steel browser service is not configured.",
+      };
+    }
 
-    const userDataDir = await mkdtemp(join(tmpdir(), "resy-claim-"));
-    const browser = await chromium.launch({ headless: true });
-    const context = await browser.newContext({ storageState: state });
+    if (!params.profileKey) {
+      return {
+        success: false,
+        error: "No profile key provided for booking attempt.",
+      };
+    }
 
+    const session = await this.steel.createSession({
+      profileKey: params.profileKey,
+      timeout: 15,
+    });
+
+    let browser:
+      | Awaited<ReturnType<typeof chromium.connectOverCDP>>
+      | undefined;
     try {
+      browser = await chromium.connectOverCDP(session.websocketUrl);
+      const context = browser.contexts()[0] ?? (await browser.newContext());
       const page = await context.newPage();
+
       const targetUrl =
         params.alert.bookingUrl ?? this.buildNotifySetup(params.watch).setupUrl;
 
       await page.goto(targetUrl, { waitUntil: "domcontentloaded" });
 
-      if (!(await isAuthenticatedResySession(page, state))) {
+      if (!(await isAuthenticatedResyPage(page))) {
         return {
           success: false,
           reconnectRequired: true,
@@ -180,14 +143,21 @@ export class ResyProviderAdapter implements ReservationProviderPort {
         },
       };
     } catch (error) {
+      if (error instanceof SteelUnavailableError) {
+        return {
+          success: false,
+          error: "Browser service unavailable.",
+        };
+      }
       return {
         success: false,
         error: error instanceof Error ? error.message : String(error),
       };
     } finally {
-      await context.close();
-      await browser.close();
-      await rm(userDataDir, { recursive: true, force: true });
+      if (browser) {
+        await browser.close().catch(() => {});
+      }
+      await this.steel.releaseSession(session.sessionId).catch(() => {});
     }
   }
 }

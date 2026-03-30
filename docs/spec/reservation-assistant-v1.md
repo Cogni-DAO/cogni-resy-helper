@@ -104,26 +104,26 @@ Ship a truthful, functioning, single-user demo that can automatically react to o
 
 ## Invariants
 
-| Rule                         | Constraint                                                                                                                     |
-| ---------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
-| WATCH_INTENT_CANONICAL       | The app-owned watch definition is the source of truth for acceptable reservation windows.                                      |
-| OFFICIAL_ALERTS_ONLY         | V1 reacts only to official provider alerts delivered through Gmail, not scraped availability polling.                          |
-| GMAIL_PUSH_IS_TRIGGER        | Gmail push events are the low-latency ingestion trigger; email polling is fallback-only.                                       |
-| GMAIL_WATCH_RENEWAL_REQUIRED | Gmail watch registrations must be renewed before expiry or all affected watches must move into a reconnect-required state.     |
-| WINDOW_BASED_MATCHING        | Matching is done against a user-defined date/time window plus hard and soft constraints, not a single exact slot.              |
-| NO_STANDING_BROWSER          | The system must never keep a logged-in browser open indefinitely waiting for alerts.                                           |
-| SHORT_LIVED_EXECUTOR         | Each booking attempt runs in a fresh, bounded browser execution and exits immediately after success or failure.                |
+| Rule                         | Constraint                                                                                                                                                                                                      |
+| ---------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| WATCH_INTENT_CANONICAL       | The app-owned watch definition is the source of truth for acceptable reservation windows.                                                                                                                       |
+| OFFICIAL_ALERTS_ONLY         | V1 reacts only to official provider alerts delivered through Gmail, not scraped availability polling.                                                                                                           |
+| GMAIL_PUSH_IS_TRIGGER        | Gmail push events are the low-latency ingestion trigger; email polling is fallback-only.                                                                                                                        |
+| GMAIL_WATCH_RENEWAL_REQUIRED | Gmail watch registrations must be renewed before expiry or all affected watches must move into a reconnect-required state.                                                                                      |
+| WINDOW_BASED_MATCHING        | Matching is done against a user-defined date/time window plus hard and soft constraints, not a single exact slot.                                                                                               |
+| NO_STANDING_BROWSER          | The system must never keep a logged-in browser open indefinitely waiting for alerts.                                                                                                                            |
+| SHORT_LIVED_EXECUTOR         | Each booking attempt runs in a fresh, bounded browser execution and exits immediately after success or failure.                                                                                                 |
 | ENCRYPTED_SESSION_STATE      | Stored Resy session state must be protected at rest and never exposed in client storage. With Steel, the browser profile lives in a Docker volume keyed by connection UUID; the DB stores only the profile key. |
-| REAUTH_IS_EXPLICIT           | Session expiry must surface a clean `Reconnect Resy` path instead of silent retries with broken auth.                          |
-| USER_AUTHORIZES_AUTO_CLAIM   | Auto-claim must be explicitly enabled on a watch; no implicit booking behavior is allowed.                                     |
-| EMAIL_EVENT_DEDUP            | Repeated Gmail push events and repeated copies of the same Resy email must collapse to one logical alert for the same user.    |
-| CLAIM_ATTEMPT_IDEMPOTENT     | Retrying the same logical alert must not create duplicate independent claim attempts.                                          |
-| ONE_ACTIVE_CLAIM_PER_WATCH   | At most one claim attempt may run at a time for a given watch.                                                                 |
-| RESY_ONLY_V1                 | V1 is Resy-specific. No generic provider abstraction is required until a second real provider exists.                          |
-| AUDIT_LOG_APPEND_ONLY        | Every important state transition must append a user-visible activity event.                                                    |
-| IMMEDIATE_USER_NOTIFICATION  | Claim success, claim failure, reconnect-required, and Gmail attention states must surface immediately in the authenticated UI. |
-| NO_MULTI_ACCOUNT_ABUSE       | V1 is for one real user account only: no account farming, no proxy rotation, no evasion, and no parallel claim spam.           |
-| NO_DEAD_ORCHESTRATION        | V1 must not ship workflow paths, internal endpoints, or background jobs that are not end-to-end runnable.                      |
+| REAUTH_IS_EXPLICIT           | Session expiry must surface a clean `Reconnect Resy` path instead of silent retries with broken auth.                                                                                                           |
+| USER_AUTHORIZES_AUTO_CLAIM   | Auto-claim must be explicitly enabled on a watch; no implicit booking behavior is allowed.                                                                                                                      |
+| EMAIL_EVENT_DEDUP            | Repeated Gmail push events and repeated copies of the same Resy email must collapse to one logical alert for the same user.                                                                                     |
+| CLAIM_ATTEMPT_IDEMPOTENT     | Retrying the same logical alert must not create duplicate independent claim attempts.                                                                                                                           |
+| ONE_ACTIVE_CLAIM_PER_WATCH   | At most one claim attempt may run at a time for a given watch.                                                                                                                                                  |
+| RESY_ONLY_V1                 | V1 is Resy-specific. No generic provider abstraction is required until a second real provider exists.                                                                                                           |
+| AUDIT_LOG_APPEND_ONLY        | Every important state transition must append a user-visible activity event.                                                                                                                                     |
+| IMMEDIATE_USER_NOTIFICATION  | Claim success, claim failure, reconnect-required, and Gmail attention states must surface immediately in the authenticated UI.                                                                                  |
+| NO_MULTI_ACCOUNT_ABUSE       | V1 is for one real user account only: no account farming, no proxy rotation, no evasion, and no parallel claim spam.                                                                                            |
+| NO_DEAD_ORCHESTRATION        | V1 must not ship workflow paths, internal endpoints, or background jobs that are not end-to-end runnable.                                                                                                       |
 
 ## Schema
 
@@ -158,14 +158,14 @@ The app owns the canonical watch object.
 
 ### Resy Session
 
-| Field                      | Type        | Constraints            | Description                                                              |
-| -------------------------- | ----------- | ---------------------- | ------------------------------------------------------------------------ |
-| `provider`                 | enum        | required               | `resy`                                                                   |
-| `session_state_ciphertext` | text        | deprecated, nullable   | Legacy: encrypted Playwright storage state. Unused when Steel is active. |
-| `session_status`           | enum        | required               | `connected`, `expired`, `reconnect_required`                             |
-| `session_lease_until`      | timestamptz | nullable               | Active Steel session lease expiry. NULL = no session in use.             |
-| `last_verified_at`         | timestamp   | optional               | Last successful validation of saved session                              |
-| `expires_hint_at`          | timestamp   | optional               | Best-effort expiry hint from validation                                  |
+| Field                      | Type        | Constraints          | Description                                                              |
+| -------------------------- | ----------- | -------------------- | ------------------------------------------------------------------------ |
+| `provider`                 | enum        | required             | `resy`                                                                   |
+| `session_state_ciphertext` | text        | deprecated, nullable | Legacy: encrypted Playwright storage state. Unused when Steel is active. |
+| `session_status`           | enum        | required             | `connected`, `expired`, `reconnect_required`                             |
+| `session_lease_until`      | timestamptz | nullable             | Active Steel session lease expiry. NULL = no session in use.             |
+| `last_verified_at`         | timestamp   | optional             | Last successful validation of saved session                              |
+| `expires_hint_at`          | timestamp   | optional             | Best-effort expiry hint from validation                                  |
 
 > **Steel browser sessions (task.0225):** Resy auth is now captured and replayed
 > via a self-hosted Steel.dev Docker container. The browser profile is persisted
@@ -242,21 +242,21 @@ The app owns the canonical watch object.
 
 ### File Pointers
 
-| File                                                                   | Purpose                                                     |
-| ---------------------------------------------------------------------- | ----------------------------------------------------------- |
-| `docs/guides/reservation-assistant.md`                                 | Developer and compliance companion guide                    |
-| `apps/web/src/contracts/reservations.watch.v1.contract.ts`             | Canonical watch API shapes                                  |
-| `apps/web/src/contracts/reservations.connections.v1.contract.ts`       | Gmail and Resy connection contracts                         |
-| `apps/web/src/core/reservations/`                                      | Window matching rules and domain types                      |
-| `apps/web/src/features/reservations/services/watch-manager.ts`         | Watch CRUD and status transitions                           |
-| `apps/web/src/features/reservations/services/gmail-alert-ingestion.ts` | Gmail-triggered alert fetch and parse orchestration         |
-| `apps/web/src/features/reservations/services/connection-manager.ts`    | Gmail and Resy connection lifecycle orchestration           |
-| `apps/web/src/adapters/server/gmail/`                                  | Gmail OAuth, watch registration, and message fetch adapters |
-| `apps/web/src/adapters/server/reservations/`                           | Resy session handling and Playwright execution adapters     |
+| File                                                                   | Purpose                                                       |
+| ---------------------------------------------------------------------- | ------------------------------------------------------------- |
+| `docs/guides/reservation-assistant.md`                                 | Developer and compliance companion guide                      |
+| `apps/web/src/contracts/reservations.watch.v1.contract.ts`             | Canonical watch API shapes                                    |
+| `apps/web/src/contracts/reservations.connections.v1.contract.ts`       | Gmail and Resy connection contracts                           |
+| `apps/web/src/core/reservations/`                                      | Window matching rules and domain types                        |
+| `apps/web/src/features/reservations/services/watch-manager.ts`         | Watch CRUD and status transitions                             |
+| `apps/web/src/features/reservations/services/gmail-alert-ingestion.ts` | Gmail-triggered alert fetch and parse orchestration           |
+| `apps/web/src/features/reservations/services/connection-manager.ts`    | Gmail and Resy connection lifecycle orchestration             |
+| `apps/web/src/adapters/server/gmail/`                                  | Gmail OAuth, watch registration, and message fetch adapters   |
+| `apps/web/src/adapters/server/reservations/`                           | Resy session handling and Playwright execution adapters       |
 | `packages/steel-browser/`                                              | Steel browser capability package (port, errors, REST adapter) |
-| `apps/web/src/app/(app)/reservations/`                                 | Reservation dashboard UI                                    |
-| `apps/web/src/app/api/v1/reservations/`                                | Thin delivery routes over the v1 contracts                  |
-| `apps/web/src/adapters/server/db/migrations/`                          | Checked-in schema migrations for v1 tables                  |
+| `apps/web/src/app/(app)/reservations/`                                 | Reservation dashboard UI                                      |
+| `apps/web/src/app/api/v1/reservations/`                                | Thin delivery routes over the v1 contracts                    |
+| `apps/web/src/adapters/server/db/migrations/`                          | Checked-in schema migrations for v1 tables                    |
 
 ## Open Questions
 

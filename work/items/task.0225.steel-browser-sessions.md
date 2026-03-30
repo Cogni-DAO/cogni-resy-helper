@@ -34,13 +34,13 @@ Steel.dev replaces local Chromium with a self-hosted Docker browser that persist
 
 ### Research Findings
 
-| Question | Answer |
-|----------|--------|
-| Steel concurrency (OSS) | Single active session. MVP single-user is fine. |
-| Steel auth model | Network isolation only. No API key for self-hosted. |
-| Why not Playwright MCP? | CDP endpoint fixed at server startup — can't switch per-session. |
+| Question                  | Answer                                                               |
+| ------------------------- | -------------------------------------------------------------------- |
+| Steel concurrency (OSS)   | Single active session. MVP single-user is fine.                      |
+| Steel auth model          | Network isolation only. No API key for self-hosted.                  |
+| Why not Playwright MCP?   | CDP endpoint fixed at server startup — can't switch per-session.     |
 | Why not Steel MCP server? | Puppeteer-based, less mature. Direct Playwright-over-CDP is simpler. |
-| Steel Docker image | `ghcr.io/steel-dev/steel-browser` — ports 3000 (API) + 9223 (CDP). |
+| Steel Docker image        | `ghcr.io/steel-dev/steel-browser` — ports 3000 (API) + 9223 (CDP).   |
 
 ### Architecture
 
@@ -88,13 +88,13 @@ Agent Booking Flow (Temporal activity):
 
 ### Spec Invariants (reservation-assistant-v1)
 
-| Invariant | How |
-|-----------|-----|
-| NO_STANDING_BROWSER | Steel sessions created on-demand, released immediately after use. |
-| SHORT_LIVED_EXECUTOR | 15-minute lease + Steel timeout. Released after booking attempt. |
-| ENCRYPTED_SESSION_STATE | Profile lives in Docker volume. Connection row stores only the connection ID as profile key. `session_state_ciphertext` column deprecated (nullable, unused for new flows). |
-| REAUTH_IS_EXPLICIT | Failed auth → `reconnect_required` → user re-authenticates via new debug session. |
-| ONE_ACTIVE_CLAIM_PER_WATCH | Atomic lease prevents concurrent sessions for the same connection. |
+| Invariant                  | How                                                                                                                                                                         |
+| -------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| NO_STANDING_BROWSER        | Steel sessions created on-demand, released immediately after use.                                                                                                           |
+| SHORT_LIVED_EXECUTOR       | 15-minute lease + Steel timeout. Released after booking attempt.                                                                                                            |
+| ENCRYPTED_SESSION_STATE    | Profile lives in Docker volume. Connection row stores only the connection ID as profile key. `session_state_ciphertext` column deprecated (nullable, unused for new flows). |
+| REAUTH_IS_EXPLICIT         | Failed auth → `reconnect_required` → user re-authenticates via new debug session.                                                                                           |
+| ONE_ACTIVE_CLAIM_PER_WATCH | Atomic lease prevents concurrent sessions for the same connection.                                                                                                          |
 
 ## Allowed Changes
 
@@ -154,7 +154,7 @@ packages/steel-browser/
 ## Plan
 
 - [ ] **1. Shared package: `packages/steel-browser`**
-  Create capability package following `operator-wallet` pattern:
+      Create capability package following `operator-wallet` pattern:
   - `src/port/steel-session.port.ts` — `SteelSessionPort` interface:
     ```typescript
     interface SteelSessionResult {
@@ -163,7 +163,10 @@ packages/steel-browser/
       websocketUrl: string;
     }
     interface SteelSessionPort {
-      createSession(opts: { profileKey: string; timeout?: number }): Promise<SteelSessionResult>;
+      createSession(opts: {
+        profileKey: string;
+        timeout?: number;
+      }): Promise<SteelSessionResult>;
       releaseSession(sessionId: string): Promise<void>;
     }
     ```
@@ -173,7 +176,7 @@ packages/steel-browser/
   - Add to `pnpm-workspace.yaml`, verify `pnpm packages:build`
 
 - [ ] **2. Docker Compose: Steel service**
-  Add `steel-browser` to `docker-compose.dev.yml`:
+      Add `steel-browser` to `docker-compose.dev.yml`:
   - Image: `ghcr.io/steel-dev/steel-browser`
   - Profile: `steel` (opt-in for dev)
   - Volume: `steel-profiles` named volume
@@ -188,14 +191,14 @@ packages/steel-browser/
   - Verify: `pnpm packages:build`
 
 - [ ] **4. Port contract update**
-  Update `ReservationProviderPort` in `apps/web/src/ports/reservation.port.ts`:
+      Update `ReservationProviderPort` in `apps/web/src/ports/reservation.port.ts`:
   - `captureSession()` → returns `SessionCaptureResult` with `profileKey: string` instead of `sessionStateCiphertext`
   - `attemptBooking(params)` → `BookingAssistParams` takes `profileKey: string` instead of `sessionStateCiphertext`
   - Keep `sessionStateCiphertext` fields as optional/deprecated for backward compat during transition
-  Add `resyStartOperation` Zod contract: input `{}`, output `{ connectionId: string, debugUrl: string }`
+    Add `resyStartOperation` Zod contract: input `{}`, output `{ connectionId: string, debugUrl: string }`
 
 - [ ] **5. Feature service: Steel orchestration**
-  In `connection-manager.ts`:
+      In `connection-manager.ts`:
   - Add `SteelSessionPort` to `ReservationConnectionManagerDeps`
   - New `startResyConnection(userId, deps)`:
     1. Atomic lease: `UPDATE ... WHERE (lease IS NULL OR lease < now()) RETURNING *`
@@ -224,7 +227,7 @@ packages/steel-browser/
   - Wire `SteelSessionPort` from container into both routes' deps
 
 - [ ] **8. Container wiring**
-  In `bootstrap/container.ts`:
+      In `bootstrap/container.ts`:
   - Import `SteelRestClientAdapter` from `@cogni/steel-browser/adapters/rest`
   - Wire: `steelSession: serverEnv.STEEL_API_URL ? new SteelRestClientAdapter({ baseUrl: serverEnv.STEEL_API_URL }) : undefined`
   - Add to `Container` interface: `steelSession: SteelSessionPort | undefined`

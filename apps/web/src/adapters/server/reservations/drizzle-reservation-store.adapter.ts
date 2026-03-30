@@ -14,7 +14,7 @@ import type {
   ReservationConnectionStatus,
   WatchRequestStatus,
 } from "@cogni/db-schema/reservations";
-import { and, desc, eq, or } from "drizzle-orm";
+import { and, desc, eq, isNull, lt, or, sql } from "drizzle-orm";
 
 import type { Database } from "@/adapters/server/db/client";
 import type {
@@ -65,6 +65,7 @@ function mapConnection(row: ReservationConnectionRow): ReservationConnection {
     refreshTokenCiphertext: row.refreshTokenCiphertext,
     tokenExpiresAt: row.tokenExpiresAt,
     sessionStateCiphertext: row.sessionStateCiphertext,
+    sessionLeaseUntil: row.sessionLeaseUntil,
     sessionStatus: row.sessionStatus,
     lastVerifiedAt: row.lastVerifiedAt,
     expiresHintAt: row.expiresHintAt,
@@ -269,6 +270,40 @@ export class DrizzleReservationStoreAdapter implements ReservationStorePort {
       .returning();
 
     return mapConnection(requireRow(row, "upsertConnection"));
+  }
+
+  async acquireSessionLease(
+    connectionId: string,
+    durationMinutes: number
+  ): Promise<ReservationConnection | null> {
+    const leaseUntil = sql`now() + make_interval(mins => ${durationMinutes})`;
+    const [row] = await this.db
+      .update(reservationConnections)
+      .set({
+        sessionLeaseUntil: leaseUntil,
+        updatedAt: new Date(),
+      })
+      .where(
+        and(
+          eq(reservationConnections.id, connectionId),
+          or(
+            isNull(reservationConnections.sessionLeaseUntil),
+            lt(reservationConnections.sessionLeaseUntil, sql`now()`)
+          )
+        )
+      )
+      .returning();
+    return row ? mapConnection(row) : null;
+  }
+
+  async clearSessionLease(connectionId: string): Promise<void> {
+    await this.db
+      .update(reservationConnections)
+      .set({
+        sessionLeaseUntil: null,
+        updatedAt: new Date(),
+      })
+      .where(eq(reservationConnections.id, connectionId));
   }
 
   async createWatchRequest(

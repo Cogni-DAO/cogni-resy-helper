@@ -55,6 +55,7 @@ export interface ReservationConnection {
   refreshTokenCiphertext: string | null;
   tokenExpiresAt: Date | null;
   sessionStateCiphertext: string | null;
+  sessionLeaseUntil: Date | null;
   sessionStatus: string | null;
   lastVerifiedAt: Date | null;
   expiresHintAt: Date | null;

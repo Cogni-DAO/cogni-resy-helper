@@ -1,6 +1,14 @@
 // SPDX-License-Identifier: LicenseRef-PolyForm-Shield-1.0.0
 // SPDX-FileCopyrightText: 2025 Cogni-DAO
 
+/**
+ * Module: `@app/api/v1/reservations/connections/resy/capture`
+ * Purpose: Finalize Resy connection after user authenticates in Steel debug browser.
+ * Scope: Route handler only — delegates to connection-manager service. Does not contain business logic.
+ * Side-effects: IO (via delegated service)
+ * @public
+ */
+
 import { NextResponse } from "next/server";
 
 import { getSessionUser } from "@/app/_lib/auth/session";
@@ -17,30 +25,19 @@ export const POST = wrapRouteHandlerWithLogging(
     routeId: "reservations.connections.resy.capture",
     auth: { mode: "required", getSessionUser },
   },
-  async (_ctx, request, sessionUser) => {
+  async (_ctx, _request, sessionUser) => {
     if (!sessionUser) {
       throw new Error("sessionUser required");
     }
 
-    let body: unknown = {};
-    try {
-      body = await request.json();
-    } catch {
-      body = {};
-    }
-    const input = resyCaptureOperation.input.parse(body);
-
     const container = getContainer();
     try {
-      const connection = await captureResyConnection(
-        sessionUser.id,
-        input.startUrl,
-        {
-          store: container.reservationStore,
-          gmail: container.reservationGmail,
-          provider: container.reservationProvider,
-        }
-      );
+      const connection = await captureResyConnection(sessionUser.id, {
+        store: container.reservationStore,
+        gmail: container.reservationGmail,
+        provider: container.reservationProvider,
+        steel: container.steelSession,
+      });
 
       return NextResponse.json(
         resyCaptureOperation.output.parse({

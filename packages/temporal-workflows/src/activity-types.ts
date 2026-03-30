@@ -244,7 +244,8 @@ export interface ReservationActivities {
   attemptBookingActivity(input: {
     watchRequestId: string;
     platform: string;
-    sessionStatePath: string;
+    profileKey?: string;
+    sessionStatePath?: string;
     targetSlot?: { date: string; time: string };
   }): Promise<{
     success: boolean;
