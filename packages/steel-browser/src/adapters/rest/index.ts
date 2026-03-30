@@ -7,6 +7,7 @@
  * Scope: Re-exports only. Does not contain runtime logic.
  * Invariants: Consumers use `@cogni/steel-browser/adapters/rest` to avoid pulling adapter code into non-Steel contexts.
  * Side-effects: none
+ * Links: docs/spec/reservation-assistant-v1.md
  * @public
  */
 

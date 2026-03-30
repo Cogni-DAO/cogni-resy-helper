@@ -7,6 +7,7 @@
  * Scope: Defines the session create/release contract. Does not handle env, credentials, or HTTP transport.
  * Invariants: PURE_LIBRARY — no I/O, no env reads, no side effects.
  * Side-effects: none (interface definition only)
+ * Links: docs/spec/reservation-assistant-v1.md
  * @public
  */
 

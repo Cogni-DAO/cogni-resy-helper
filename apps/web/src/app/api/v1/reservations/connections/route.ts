@@ -31,6 +31,7 @@ export const GET = wrapRouteHandlerWithLogging(
       store: container.reservationStore,
       gmail: container.reservationGmail,
       provider: container.reservationProvider,
+      steel: container.steelSession,
     });
 
     return NextResponse.json(

@@ -7,6 +7,7 @@
  * Scope: Exports port interface and domain errors. Does not export REST adapter (use subpath `@cogni/steel-browser/adapters/rest`).
  * Invariants: NO_SRC_IMPORTS, NO_SERVICE_IMPORTS, PURE_LIBRARY.
  * Side-effects: none
+ * Links: docs/spec/reservation-assistant-v1.md
  * @public
  */
 
