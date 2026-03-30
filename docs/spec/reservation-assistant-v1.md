@@ -113,7 +113,7 @@ Ship a truthful, functioning, single-user demo that can automatically react to o
 | WINDOW_BASED_MATCHING        | Matching is done against a user-defined date/time window plus hard and soft constraints, not a single exact slot.              |
 | NO_STANDING_BROWSER          | The system must never keep a logged-in browser open indefinitely waiting for alerts.                                           |
 | SHORT_LIVED_EXECUTOR         | Each booking attempt runs in a fresh, bounded browser execution and exits immediately after success or failure.                |
-| ENCRYPTED_SESSION_STATE      | Stored Resy session state must be encrypted at rest and never exposed in client storage.                                       |
+| ENCRYPTED_SESSION_STATE      | Stored Resy session state must be protected at rest and never exposed in client storage. With Steel, the browser profile lives in a Docker volume keyed by connection UUID; the DB stores only the profile key. |
 | REAUTH_IS_EXPLICIT           | Session expiry must surface a clean `Reconnect Resy` path instead of silent retries with broken auth.                          |
 | USER_AUTHORIZES_AUTO_CLAIM   | Auto-claim must be explicitly enabled on a watch; no implicit booking behavior is allowed.                                     |
 | EMAIL_EVENT_DEDUP            | Repeated Gmail push events and repeated copies of the same Resy email must collapse to one logical alert for the same user.    |
@@ -158,13 +158,21 @@ The app owns the canonical watch object.
 
 ### Resy Session
 
-| Field                      | Type      | Constraints | Description                                  |
-| -------------------------- | --------- | ----------- | -------------------------------------------- |
-| `provider`                 | enum      | required    | `resy`                                       |
-| `session_state_ciphertext` | text      | required    | Encrypted Playwright storage state           |
-| `session_status`           | enum      | required    | `connected`, `expired`, `reconnect_required` |
-| `last_verified_at`         | timestamp | optional    | Last successful validation of saved session  |
-| `expires_hint_at`          | timestamp | optional    | Best-effort expiry hint from validation      |
+| Field                      | Type        | Constraints            | Description                                                              |
+| -------------------------- | ----------- | ---------------------- | ------------------------------------------------------------------------ |
+| `provider`                 | enum        | required               | `resy`                                                                   |
+| `session_state_ciphertext` | text        | deprecated, nullable   | Legacy: encrypted Playwright storage state. Unused when Steel is active. |
+| `session_status`           | enum        | required               | `connected`, `expired`, `reconnect_required`                             |
+| `session_lease_until`      | timestamptz | nullable               | Active Steel session lease expiry. NULL = no session in use.             |
+| `last_verified_at`         | timestamp   | optional               | Last successful validation of saved session                              |
+| `expires_hint_at`          | timestamp   | optional               | Best-effort expiry hint from validation                                  |
+
+> **Steel browser sessions (task.0225):** Resy auth is now captured and replayed
+> via a self-hosted Steel.dev Docker container. The browser profile is persisted
+> to a Docker volume keyed by the connection's UUID (`profileKey`). The
+> `session_state_ciphertext` column is retained for backward compatibility but
+> is no longer written to by the Steel-based flow. See `@cogni/steel-browser`
+> package for the port interface.
 
 ### Activity Event
 
@@ -245,6 +253,7 @@ The app owns the canonical watch object.
 | `apps/web/src/features/reservations/services/connection-manager.ts`    | Gmail and Resy connection lifecycle orchestration           |
 | `apps/web/src/adapters/server/gmail/`                                  | Gmail OAuth, watch registration, and message fetch adapters |
 | `apps/web/src/adapters/server/reservations/`                           | Resy session handling and Playwright execution adapters     |
+| `packages/steel-browser/`                                              | Steel browser capability package (port, errors, REST adapter) |
 | `apps/web/src/app/(app)/reservations/`                                 | Reservation dashboard UI                                    |
 | `apps/web/src/app/api/v1/reservations/`                                | Thin delivery routes over the v1 contracts                  |
 | `apps/web/src/adapters/server/db/migrations/`                          | Checked-in schema migrations for v1 tables                  |
