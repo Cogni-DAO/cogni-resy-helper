@@ -2,7 +2,7 @@
 id: task.0225
 type: task
 title: "Steel browser sessions — tenant-authenticated browser automation for reservation booking"
-status: needs_implement
+status: needs_merge
 priority: 0
 rank: 1
 estimate: 3
@@ -12,14 +12,14 @@ spec_refs: reservation-assistant-v1
 assignees: derekg1729
 credit:
 project:
-branch: feat/steel-browser-sessions
+branch: feat/steel-browser-connections
 pr:
 reviewer:
 revision: 1
 blocked_by:
 deploy_verified: false
 created: 2026-03-29
-updated: 2026-03-29
+updated: 2026-03-30
 labels: [reservations, browser, steel, infra]
 external_refs:
 ---
