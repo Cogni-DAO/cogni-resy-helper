@@ -110,6 +110,8 @@ export const serverSchema = z.object({
   GOOGLE_OAUTH_CLIENT_ID: optionalString,
   GOOGLE_OAUTH_CLIENT_SECRET: optionalString,
   GMAIL_PUBSUB_TOPIC: optionalString,
+  /** Steel browser API URL (e.g. http://steel-browser:3000). Enables browser session management. */
+  STEEL_API_URL: optionalString,
 
   // Optional
   PORT: z.coerce.number().default(3000),

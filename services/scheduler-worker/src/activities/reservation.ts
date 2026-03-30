@@ -40,7 +40,10 @@ export interface NotifyUserInput {
 export interface AttemptBookingInput {
   watchRequestId: string;
   platform: string;
-  sessionStatePath: string;
+  /** Steel profile key (connection UUID). Preferred over sessionStatePath. */
+  profileKey?: string;
+  /** @deprecated Legacy encrypted session state path. Use profileKey instead. */
+  sessionStatePath?: string;
   targetSlot?: { date: string; time: string };
 }
 

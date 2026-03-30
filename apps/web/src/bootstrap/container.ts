@@ -27,6 +27,8 @@ import { toUserId, userActor } from "@cogni/ids";
 import { numberToPpm } from "@cogni/operator-wallet";
 import { PrivyOperatorWalletAdapter } from "@cogni/operator-wallet/adapters/privy";
 import type { ScheduleControlPort } from "@cogni/scheduler-core";
+import type { SteelSessionPort } from "@cogni/steel-browser";
+import { SteelRestClientAdapter } from "@cogni/steel-browser/adapters/rest";
 import type { WorkItemQueryPort } from "@cogni/work-items";
 import { MarkdownWorkItemAdapter } from "@cogni/work-items/markdown";
 import {
@@ -216,6 +218,8 @@ export interface Container {
   reservationStore: ReservationStorePort;
   /** Gmail integration for official alert ingestion */
   reservationGmail: GmailIntegrationPort;
+  /** Steel browser session manager — undefined when STEEL_API_URL not set */
+  steelSession: SteelSessionPort | undefined;
   /** Resy executor for notify setup and claim attempts */
   reservationProvider: ReservationProviderPort;
 }
@@ -710,7 +714,15 @@ function createContainer(): Container {
     })(),
     reservationStore: new DrizzleReservationStoreAdapter(db),
     reservationGmail: new GmailAdapter(),
-    reservationProvider: new ResyProviderAdapter(),
+    ...(() => {
+      const steelSession = env.STEEL_API_URL
+        ? new SteelRestClientAdapter({ baseUrl: env.STEEL_API_URL })
+        : undefined;
+      return {
+        steelSession,
+        reservationProvider: new ResyProviderAdapter(steelSession),
+      };
+    })(),
   };
 }
 

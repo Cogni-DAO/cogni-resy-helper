@@ -133,6 +133,10 @@ export const reservationConnections = pgTable(
     refreshTokenCiphertext: text("refresh_token_ciphertext"),
     tokenExpiresAt: timestamp("token_expires_at", { withTimezone: true }),
     sessionStateCiphertext: text("session_state_ciphertext"),
+    /** Active Steel session lease expiry. NULL = no session in use. */
+    sessionLeaseUntil: timestamp("session_lease_until", {
+      withTimezone: true,
+    }),
     sessionStatus: text("session_status", {
       enum: RESERVATION_CONNECTION_STATUSES,
     }),

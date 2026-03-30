@@ -4,7 +4,7 @@
 /**
  * Module: `@cogni/scheduler-worker-service/workflows/reservation-watch`
  * Purpose: Temporal Workflow for reservation watch request lifecycle.
- * Scope: Deterministic orchestration only. All I/O happens in Activities.
+ * Scope: Deterministic orchestration only. All I/O happens in Activities. Does not perform database or network calls directly.
  * Invariants:
  * - Per TEMPORAL_DETERMINISM: No I/O, network calls in workflow code
  * - USER_APPROVAL_GATE: Booking assist only after explicit approval signal
@@ -58,7 +58,9 @@ export interface AlertPayload {
 }
 
 export interface BookingApprovalPayload {
-  sessionStatePath: string;
+  profileKey?: string;
+  /** @deprecated Use profileKey instead. */
+  sessionStatePath?: string;
   targetSlot?: { date: string; time: string };
 }
 
@@ -216,6 +218,7 @@ export async function ReservationWatchWorkflow(
   const bookingResult = await attemptBookingActivity({
     watchRequestId,
     platform,
+    profileKey: resolvedApprovalPayload.profileKey,
     sessionStatePath: resolvedApprovalPayload.sessionStatePath,
     targetSlot: resolvedApprovalPayload.targetSlot,
   });

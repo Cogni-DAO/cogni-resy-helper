@@ -173,7 +173,7 @@ export async function ingestGmailPushEvent(
       "resy"
     );
 
-    if (!resyConnection?.sessionStateCiphertext) {
+    if (!resyConnection || resyConnection.status !== "connected") {
       await deps.store.updateWatchRequestStatus(
         connection.userId,
         matchedWatch.id,
@@ -214,7 +214,7 @@ export async function ingestGmailPushEvent(
     const booking = await deps.provider.attemptBooking({
       watch: matchedWatch,
       alert: receiptResult.receipt,
-      sessionStateCiphertext: resyConnection.sessionStateCiphertext,
+      profileKey: resyConnection.id,
     });
 
     if (booking.success) {
