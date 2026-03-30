@@ -705,6 +705,31 @@ services:
       retries: 5
       start_period: 15s
 
+  # ── Steel Browser (opt-in: --profile steel) ─────────────────────────
+  # Self-hosted browser sandbox for authenticated session capture and
+  # Playwright CDP replay. Single-session OSS — one active session at a time.
+  steel-browser:
+    image: ghcr.io/steel-dev/steel-browser
+    container_name: steel-browser
+    profiles: [steel]
+    restart: unless-stopped
+    networks:
+      - cogni-edge
+    volumes:
+      - steel_profiles:/data
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:3000/v1/health"]
+      interval: 15s
+      timeout: 5s
+      start_period: 20s
+      retries: 3
+    environment:
+      - CHROME_HEADLESS=true
+    # Ports are internal only — no host binding. Access via cogni-edge network.
+    expose:
+      - "3000"
+      - "9223"
+
 networks:
   cogni-edge:
     name: cogni-edge
@@ -742,3 +767,5 @@ volumes:
     name: tigerbeetle_data
   cogni_workspace:
     name: cogni_workspace
+  steel_profiles:
+    name: steel_profiles

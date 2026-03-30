@@ -148,6 +148,17 @@ export interface ReservationStorePort {
   upsertConnection(
     params: UpsertReservationConnectionParams
   ): Promise<ReservationConnection>;
+  /**
+   * Atomically acquire a session lease on a reservation connection.
+   * Returns the connection if the lease was acquired, null if already held.
+   * Uses: UPDATE ... WHERE (lease IS NULL OR lease < now()) RETURNING *
+   */
+  acquireSessionLease(
+    connectionId: string,
+    durationMinutes: number
+  ): Promise<ReservationConnection | null>;
+  /** Clear the session lease on a reservation connection. */
+  clearSessionLease(connectionId: string): Promise<void>;
 
   createWatchRequest(params: CreateWatchRequestParams): Promise<WatchRequest>;
   getWatchRequest(id: string): Promise<WatchRequest | null>;
@@ -246,7 +257,10 @@ export interface AlertSetupResult {
 export interface BookingAssistParams {
   watch: WatchRequest;
   alert: ReservationAlertReceipt;
-  sessionStateCiphertext: string;
+  /** Steel profile key (connection UUID). Preferred over sessionStateCiphertext. */
+  profileKey?: string | undefined;
+  /** @deprecated Use profileKey with Steel browser sessions instead. */
+  sessionStateCiphertext?: string | undefined;
 }
 
 export interface BookingAssistResult {
@@ -259,7 +273,10 @@ export interface BookingAssistResult {
 
 export interface SessionCaptureResult {
   providerAccountEmail?: string | null | undefined;
-  sessionStateCiphertext: string;
+  /** Steel profile key (connection UUID). Set when using Steel browser sessions. */
+  profileKey?: string | undefined;
+  /** @deprecated Legacy Playwright storageState. Empty string when using Steel. */
+  sessionStateCiphertext?: string | undefined;
   sessionStatus: "connected" | "expired" | "reconnect_required" | "error";
   lastVerifiedAt: Date | null;
   expiresHintAt: Date | null;

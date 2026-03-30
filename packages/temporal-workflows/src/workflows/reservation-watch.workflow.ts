@@ -58,7 +58,9 @@ export interface AlertPayload {
 }
 
 export interface BookingApprovalPayload {
-  sessionStatePath: string;
+  profileKey?: string;
+  /** @deprecated Use profileKey instead. */
+  sessionStatePath?: string;
   targetSlot?: { date: string; time: string };
 }
 
@@ -216,6 +218,7 @@ export async function ReservationWatchWorkflow(
   const bookingResult = await attemptBookingActivity({
     watchRequestId,
     platform,
+    profileKey: resolvedApprovalPayload.profileKey,
     sessionStatePath: resolvedApprovalPayload.sessionStatePath,
     targetSlot: resolvedApprovalPayload.targetSlot,
   });

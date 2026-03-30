@@ -1,16 +1,30 @@
 // SPDX-License-Identifier: LicenseRef-PolyForm-Shield-1.0.0
 // SPDX-FileCopyrightText: 2025 Cogni-DAO
 
+/**
+ * Module: `@features/reservations/services/connection-manager`
+ * Purpose: Orchestrates Gmail and Resy connection lifecycle for the reservation assistant.
+ * Scope: Feature-level orchestration via ports. Does not contain DB queries, HTTP calls, or browser logic.
+ * Side-effects: none (delegates I/O to injected ports)
+ * @public
+ */
+
+import type { SteelSessionPort } from "@cogni/steel-browser";
+import { SteelUnavailableError } from "@cogni/steel-browser";
+
 import type {
   GmailIntegrationPort,
   ReservationProviderPort,
   ReservationStorePort,
 } from "@/ports";
 
+const STEEL_SESSION_LEASE_MINUTES = 15;
+
 export interface ReservationConnectionManagerDeps {
   store: ReservationStorePort;
   gmail: GmailIntegrationPort;
   provider: ReservationProviderPort;
+  steel: SteelSessionPort | undefined;
 }
 
 export async function listConnections(
@@ -114,36 +128,129 @@ export async function renewGmailWatch(
   return updated;
 }
 
-export async function captureResyConnection(
+/**
+ * Start a Resy authentication session via Steel browser.
+ * Creates or reuses a Resy connection, acquires an atomic lease,
+ * and returns a debug URL for the user to log in.
+ */
+export async function startResyConnection(
   userId: string,
-  startUrl: string | undefined,
   deps: ReservationConnectionManagerDeps
-) {
-  const result = await deps.provider.captureSession({ startUrl });
-  if (!result.sessionStateCiphertext) {
+): Promise<{ connectionId: string; debugUrl: string }> {
+  if (!deps.steel) {
     throw new Error(
-      "Resy session capture did not produce authenticated state."
+      "Steel browser service is not configured (STEEL_API_URL not set)."
     );
   }
 
-  const connection = await deps.store.upsertConnection({
+  // Ensure a Resy connection row exists
+  let connection = await deps.store.getConnectionByType(userId, "resy");
+  if (!connection) {
+    connection = await deps.store.upsertConnection({
+      userId,
+      connectionType: "resy",
+      status: "pending",
+      provider: "resy",
+    });
+  }
+
+  // Atomic lease acquisition — returns null if lease is already held
+  const leased = await deps.store.acquireSessionLease(
+    connection.id,
+    STEEL_SESSION_LEASE_MINUTES
+  );
+  if (!leased) {
+    throw new SessionLeaseHeldError(connection.id);
+  }
+
+  // Create Steel session — profile key = connection UUID
+  try {
+    const session = await deps.steel.createSession({
+      profileKey: connection.id,
+      timeout: STEEL_SESSION_LEASE_MINUTES,
+    });
+
+    // Store Steel session ID in metadata for release
+    await deps.store.upsertConnection({
+      userId,
+      connectionType: "resy",
+      status: "pending",
+      provider: "resy",
+      metadataJson: {
+        ...connection.metadataJson,
+        steelSessionId: session.sessionId,
+      },
+    });
+
+    return {
+      connectionId: connection.id,
+      debugUrl: session.debugUrl,
+    };
+  } catch (err) {
+    // Roll back lease on Steel failure
+    await deps.store.clearSessionLease(connection.id).catch(() => {});
+    throw err;
+  }
+}
+
+/**
+ * Finalize Resy connection after user completes authentication in the Steel debug browser.
+ * Releases the Steel session and updates connection status.
+ */
+export async function captureResyConnection(
+  userId: string,
+  deps: ReservationConnectionManagerDeps
+) {
+  const connection = await deps.store.getConnectionByType(userId, "resy");
+  if (!connection) {
+    throw new Error("No Resy connection found for user.");
+  }
+
+  // Release Steel session if one is active
+  const steelSessionId = (
+    connection.metadataJson as Record<string, unknown> | null
+  )?.steelSessionId as string | undefined;
+  if (steelSessionId && deps.steel) {
+    try {
+      await deps.steel.releaseSession(steelSessionId);
+    } catch (err) {
+      // Non-fatal — Steel may have already timed out
+      if (!(err instanceof SteelUnavailableError)) throw err;
+    }
+  }
+
+  // Clear the lease
+  await deps.store.clearSessionLease(connection.id);
+
+  // Update connection status
+  const updated = await deps.store.upsertConnection({
     userId,
     connectionType: "resy",
     status: "connected",
     provider: "resy",
-    providerAccountEmail: result.providerAccountEmail ?? null,
-    sessionStateCiphertext: result.sessionStateCiphertext,
-    sessionStatus: result.sessionStatus,
-    lastVerifiedAt: result.lastVerifiedAt,
-    expiresHintAt: result.expiresHintAt,
+    providerAccountEmail: connection.providerAccountEmail ?? null,
+    sessionStatus: "connected",
+    lastVerifiedAt: new Date(),
+    metadataJson: {
+      ...connection.metadataJson,
+      steelSessionId: undefined,
+    },
   });
 
   await deps.store.appendEvent({
     userId,
-    connectionId: connection.id,
+    connectionId: updated.id,
     source: "resy",
     eventType: "resy_connected",
   });
 
-  return connection;
+  return updated;
+}
+
+/** Thrown when a Steel session lease is already held for a connection. */
+export class SessionLeaseHeldError extends Error {
+  override readonly name = "SessionLeaseHeldError" as const;
+  constructor(public readonly connectionId: string) {
+    super(`Session lease already held for connection ${connectionId}`);
+  }
 }

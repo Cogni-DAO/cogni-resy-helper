@@ -84,14 +84,24 @@ export const gmailRenewOperation = {
   output: GmailConnectionSchema,
 } as const;
 
+export const resyStartOperation = {
+  id: "reservations.connections.resy.start.v1",
+  summary: "Start Resy browser session",
+  description:
+    "Creates a Steel browser session for user to authenticate with Resy. Returns a debug URL for the live browser.",
+  input: z.object({}),
+  output: z.object({
+    connectionId: z.string().uuid(),
+    debugUrl: z.string().url(),
+  }),
+} as const;
+
 export const resyCaptureOperation = {
   id: "reservations.connections.resy.capture.v1",
   summary: "Capture Resy session",
   description:
-    "Launches a short-lived controlled browser flow to capture Resy session state.",
-  input: z.object({
-    startUrl: z.string().url().optional(),
-  }),
+    "Finalizes the Steel browser session after user authentication. Verifies auth and updates connection status.",
+  input: z.object({}),
   output: ResyConnectionSchema,
 } as const;
 
