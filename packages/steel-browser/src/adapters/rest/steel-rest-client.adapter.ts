@@ -7,6 +7,7 @@
  * Scope: Thin fetch wrapper over Steel POST /v1/sessions and DELETE /v1/sessions/:id. Does not read env or manage lifecycle.
  * Invariants: No env reads — baseUrl injected via constructor. No process lifecycle.
  * Side-effects: IO (HTTP requests to Steel API)
+ * Links: docs/spec/reservation-assistant-v1.md
  * @public
  */
 

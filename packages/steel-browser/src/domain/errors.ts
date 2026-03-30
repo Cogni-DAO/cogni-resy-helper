@@ -7,6 +7,7 @@
  * Scope: Error classes only. Does not contain retry logic or HTTP status mapping.
  * Invariants: PURE_LIBRARY — no I/O.
  * Side-effects: none
+ * Links: docs/spec/reservation-assistant-v1.md
  * @public
  */
 

@@ -1,7 +1,23 @@
+// SPDX-License-Identifier: LicenseRef-PolyForm-Shield-1.0.0
+// SPDX-FileCopyrightText: 2025 Cogni-DAO
+
+/**
+ * Module: `@cogni/steel-browser/tests/steel-rest-client.test`
+ * Purpose: Unit tests for Steel REST client adapter.
+ * Scope: Exercises create/release session flows, error mapping, and timeout handling. Does not make real HTTP requests.
+ * Invariants: none
+ * Side-effects: none
+ * Links: docs/spec/reservation-assistant-v1.md
+ * @internal
+ */
+
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { SteelRestClientAdapter } from "../src/adapters/rest/steel-rest-client.adapter.js";
-import { SteelSessionError, SteelUnavailableError } from "../src/domain/errors.js";
+import {
+  SteelSessionError,
+  SteelUnavailableError,
+} from "../src/domain/errors.js";
 
 const BASE_URL = "http://steel-browser:3000";
 
@@ -41,7 +57,11 @@ describe("SteelRestClientAdapter", () => {
 
       vi.stubGlobal(
         "fetch",
-        mockFetch({ ok: true, status: 200, json: () => Promise.resolve(mockResponse) }),
+        mockFetch({
+          ok: true,
+          status: 200,
+          json: () => Promise.resolve(mockResponse),
+        })
       );
 
       const result = await adapter.createSession({ profileKey: "conn-uuid-1" });
@@ -54,7 +74,7 @@ describe("SteelRestClientAdapter", () => {
 
       expect(fetch).toHaveBeenCalledWith(
         `${BASE_URL}/v1/sessions`,
-        expect.objectContaining({ method: "POST" }),
+        expect.objectContaining({ method: "POST" })
       );
     });
 
@@ -71,7 +91,7 @@ describe("SteelRestClientAdapter", () => {
               wsUrl: "ws://fallback",
               status: "active",
             }),
-        }),
+        })
       );
 
       const result = await adapter.createSession({ profileKey: "conn-uuid-2" });
@@ -81,11 +101,11 @@ describe("SteelRestClientAdapter", () => {
     it("throws SteelUnavailableError on network failure", async () => {
       vi.stubGlobal(
         "fetch",
-        vi.fn().mockRejectedValue(new Error("ECONNREFUSED")),
+        vi.fn().mockRejectedValue(new Error("ECONNREFUSED"))
       );
 
       await expect(
-        adapter.createSession({ profileKey: "conn-uuid-3" }),
+        adapter.createSession({ profileKey: "conn-uuid-3" })
       ).rejects.toThrow(SteelUnavailableError);
     });
 
@@ -96,11 +116,11 @@ describe("SteelRestClientAdapter", () => {
           ok: false,
           status: 500,
           text: () => Promise.resolve("internal error"),
-        }),
+        })
       );
 
       await expect(
-        adapter.createSession({ profileKey: "conn-uuid-4" }),
+        adapter.createSession({ profileKey: "conn-uuid-4" })
       ).rejects.toThrow(SteelSessionError);
     });
 
@@ -111,12 +131,16 @@ describe("SteelRestClientAdapter", () => {
           ok: true,
           status: 200,
           json: () =>
-            Promise.resolve({ id: "sess-789", debugUrl: "https://debug", status: "active" }),
-        }),
+            Promise.resolve({
+              id: "sess-789",
+              debugUrl: "https://debug",
+              status: "active",
+            }),
+        })
       );
 
       await expect(
-        adapter.createSession({ profileKey: "conn-uuid-5" }),
+        adapter.createSession({ profileKey: "conn-uuid-5" })
       ).rejects.toThrow(SteelSessionError);
     });
   });
@@ -129,24 +153,26 @@ describe("SteelRestClientAdapter", () => {
 
       expect(fetch).toHaveBeenCalledWith(
         `${BASE_URL}/v1/sessions/sess-123`,
-        expect.objectContaining({ method: "DELETE" }),
+        expect.objectContaining({ method: "DELETE" })
       );
     });
 
     it("accepts 404 (session already timed out)", async () => {
       vi.stubGlobal("fetch", mockFetch({ ok: false, status: 404 }));
 
-      await expect(adapter.releaseSession("sess-expired")).resolves.toBeUndefined();
+      await expect(
+        adapter.releaseSession("sess-expired")
+      ).resolves.toBeUndefined();
     });
 
     it("throws SteelUnavailableError on network failure", async () => {
       vi.stubGlobal(
         "fetch",
-        vi.fn().mockRejectedValue(new Error("ECONNREFUSED")),
+        vi.fn().mockRejectedValue(new Error("ECONNREFUSED"))
       );
 
       await expect(adapter.releaseSession("sess-123")).rejects.toThrow(
-        SteelUnavailableError,
+        SteelUnavailableError
       );
     });
 
@@ -157,11 +183,11 @@ describe("SteelRestClientAdapter", () => {
           ok: false,
           status: 500,
           text: () => Promise.resolve("server error"),
-        }),
+        })
       );
 
       await expect(adapter.releaseSession("sess-123")).rejects.toThrow(
-        SteelSessionError,
+        SteelSessionError
       );
     });
   });
