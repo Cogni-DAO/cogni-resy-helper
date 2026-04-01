@@ -64,18 +64,19 @@ Plain Postgres can serve this with append-only version rows, but it gets clumsy 
 
 ```
 ┌────────────────────────────────────────────────────────┐
-│              AWARENESS PLANE (Postgres)                 │
-│         "What the AI sees and decides right now"        │
+│                     POSTGRES                            │
+│  "Hot + immutable data, users, operations"             │
 │                                                        │
-│  observation_events    (append-only measurements)      │
-│  analysis_runs         (when/why AI was invoked)       │
-│  analysis_signals      (AI conclusions + action level) │
-│  analysis_outcomes     (ground truth for calibration)  │
-│  base_rates            (live calibration frequencies)  │
+│  Existing: auth, billing, ai, scheduling, identity,   │
+│            reservations, attribution, ingestion        │
+│            (see db-schema/src/*.ts)                    │
 │                                                        │
-│  Tempo: seconds to minutes                             │
-│  Mutability: append-only (immutable facts)             │
-│  Owner: monitoring-engine awareness pipeline           │
+│  Awareness tables (monitoring-engine spec, not yet     │
+│  implemented): observation_events, analysis_runs,     │
+│  analysis_signals, analysis_outcomes, base_rates      │
+│                                                        │
+│  Tempo: real-time to minutes                           │
+│  Mutability: append-only / operational                 │
 └──────────────────────────┬─────────────────────────────┘
                            │
                     Promotion Gate
@@ -83,23 +84,20 @@ Plain Postgres can serve this with append-only version rows, but it gets clumsy 
                            │
                            ▼
 ┌────────────────────────────────────────────────────────┐
-│              KNOWLEDGE PLANE (Doltgres)                 │
-│         "What the AI has learned over time"             │
+│                    DOLTGRES                              │
+│  "Compounding memory — what the AI has learned"        │
 │                                                        │
-│  strategies            (named decision approaches)     │
-│  strategy_versions     (versioned strategy content)    │
-│  strategy_evaluations  (eval results vs outcomes)      │
-│  prompt_defs           (system prompt definitions)     │
-│  prompt_versions       (versioned prompt content)      │
-│  evidence_refs         (curated external pointers)     │
-│  playbooks             (operational runbooks)          │
-│  knowledge_claims      (curated assertions)            │
+│  strategies, strategy_versions, prompt_defs,           │
+│  prompt_versions, strategy_evaluations                 │
 │                                                        │
 │  Tempo: hours to days                                  │
 │  Mutability: versioned (dolt_commit, dolt_log, diff)   │
-│  Owner: knowledge curation pipeline                    │
 └────────────────────────────────────────────────────────┘
 ```
+
+**Postgres** is for hot/immutable data and operational concerns: user accounts, billing, auth, scheduling, append-only ingestion receipts, and (per [monitoring-engine spec](./monitoring-engine.md)) the awareness pipeline tables. These are defined in `packages/db-schema/src/` and the monitoring-engine spec respectively — this spec does not own them.
+
+**Doltgres** is for compounding memory: strategies, prompts, evaluations that accumulate and evolve over time. Version-controlled natively.
 
 ---
 
@@ -175,39 +173,21 @@ This is the critical architectural boundary. Getting it wrong means either:
 - Poly-specific data leaks into the generic template (every fork inherits prediction market tables), or
 - Generic capabilities get trapped in domain-specific code (other domains can't reuse strategy versioning)
 
-### What stays in the Awareness Plane (Postgres, domain-specific)
+### What stays in Postgres
 
-The **Polymarket domain pack** owns all hot operational data. This lives in `db-schema/ingestion` (or `db-schema/poly` for domain tables) and follows the monitoring-engine spec:
+Everything that exists today (`packages/db-schema/src/*.ts`) plus the awareness pipeline tables defined in the [monitoring-engine spec](./monitoring-engine.md). This spec does not define or own any Postgres tables — it only defines the Doltgres knowledge tables below.
 
-| Data                          | Why it's awareness, not knowledge                |
-| ----------------------------- | ------------------------------------------------ |
-| Market price observations     | Raw measurements — append-only facts             |
-| Volume/spread/depth snapshots | Raw measurements — append-only facts             |
-| Trigger evaluations           | Ephemeral — not even persisted                   |
-| Analysis runs                 | Operational — "AI was invoked at 14:32"          |
-| Analysis signals              | Operational — "AI concluded X with Y confidence" |
-| Market resolutions (outcomes) | Operational — ground truth for calibration       |
-| Live base rates               | Operational — current calibration state          |
-| Cross-platform spread alerts  | Operational — ephemeral trigger output           |
+### What lives in Doltgres (knowledge plane)
 
-This data is **high-frequency, append-only, domain-specific**. It belongs in Postgres where the awareness pipeline already lives.
+Curated expertise that compounds over time. Generic schema — domain specificity in row content, not table structure.
 
-### What lives in the Knowledge Plane (node-template)
-
-The **knowledge plane** owns curated expertise that accumulates and evolves. This is the generic capability that every node fork inherits:
-
-| Data                   | Description                                           | Why it's knowledge, not awareness               |
-| ---------------------- | ----------------------------------------------------- | ----------------------------------------------- |
-| `strategies`           | Named decision approaches with metadata               | Evolves over time, needs version history        |
-| `strategy_versions`    | Versioned content: prompt ref, parameters, thresholds | Iterated artifact, diff to compare              |
-| `strategy_evaluations` | Eval results linking strategy versions to outcomes    | Accumulated evidence, informs future selection  |
-| `prompt_defs`          | System prompt definitions with domain + purpose       | Shared across domains, versioned                |
-| `prompt_versions`      | Actual prompt text, model params, temperature         | Most-iterated artifact — needs version tracking |
-| `evidence_refs`        | Curated pointers to research, papers, data sources    | Slowly accumulated, annotated, shared           |
-| `playbooks`            | Operational runbooks: "if X pattern, consider Y"      | Operational expertise, evolves with experience  |
-| `knowledge_claims`     | Curated assertions with provenance + confidence       | Mutable (correctable), needs version history    |
-
-This data is **low-frequency, mutable, domain-agnostic in structure**. Domains add domain-specific _content_ (a prediction market strategy vs an infra monitoring strategy) but the _schema_ is generic.
+| Table                  | Purpose                                         |
+| ---------------------- | ----------------------------------------------- |
+| `strategies`           | Named decision approaches with metadata         |
+| `strategy_versions`    | Versioned content: prompt ref, params, notes    |
+| `strategy_evaluations` | Eval results linking versions to outcomes       |
+| `prompt_defs`          | System prompt definitions with domain + purpose |
+| `prompt_versions`      | Actual prompt text, model, temperature, notes   |
 
 ### Domain Extension Pattern
 
