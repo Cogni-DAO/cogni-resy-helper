@@ -87,8 +87,8 @@ Plain Postgres can serve this with append-only version rows, but it gets clumsy 
 │                    DOLTGRES                              │
 │  "Compounding memory — what the AI has learned"        │
 │                                                        │
-│  strategies, strategy_versions, prompt_defs,           │
-│  prompt_versions, strategy_evaluations                 │
+│  Starter kit: knowledge, strategies, ...               │
+│  Grows as the node accumulates expertise               │
 │                                                        │
 │  Tempo: hours to days                                  │
 │  Mutability: versioned (dolt_commit, dolt_log, diff)   │
@@ -97,7 +97,7 @@ Plain Postgres can serve this with append-only version rows, but it gets clumsy 
 
 **Postgres** is for hot/immutable data and operational concerns: user accounts, billing, auth, scheduling, append-only ingestion receipts, and (per [monitoring-engine spec](./monitoring-engine.md)) the awareness pipeline tables. These are defined in `packages/db-schema/src/` and the monitoring-engine spec respectively — this spec does not own them.
 
-**Doltgres** is for compounding memory: strategies, prompts, evaluations that accumulate and evolve over time. Version-controlled natively.
+**Doltgres** is for compounding memory: domain-specific knowledge, strategies, and (eventually) versioned prompts that accumulate and evolve over time. Version-controlled natively. The table set is a starter kit that grows as the node matures — not a fixed schema.
 
 ---
 
@@ -179,15 +179,25 @@ Everything that exists today (`packages/db-schema/src/*.ts`) plus the awareness 
 
 ### What lives in Doltgres (knowledge plane)
 
-Curated expertise that compounds over time. Generic schema — domain specificity in row content, not table structure.
+Curated expertise that compounds over time. The table set is a **starter kit** — not a fixed schema. New tables are added as the node matures. Domain specificity lives in row content, not table structure.
 
-| Table                  | Purpose                                         |
-| ---------------------- | ----------------------------------------------- |
-| `strategies`           | Named decision approaches with metadata         |
-| `strategy_versions`    | Versioned content: prompt ref, params, notes    |
-| `strategy_evaluations` | Eval results linking versions to outcomes       |
-| `prompt_defs`          | System prompt definitions with domain + purpose |
-| `prompt_versions`      | Actual prompt text, model, temperature, notes   |
+**MVP — domain knowledge (immediate value):**
+
+| Table       | Purpose                                                               |
+| ----------- | --------------------------------------------------------------------- |
+| `knowledge` | Domain-specific facts, claims, and curated assertions with provenance |
+
+**Next — strategies (Walk phase):**
+
+| Table                  | Purpose                                      |
+| ---------------------- | -------------------------------------------- |
+| `strategies`           | Named decision approaches with metadata      |
+| `strategy_versions`    | Versioned content: params, thresholds, notes |
+| `strategy_evaluations` | Eval results linking versions to outcomes    |
+
+**Later — prompts (Run phase, with Langfuse integration):**
+
+Versioned prompts live in Langfuse for prompt engineering workflows. Doltgres stores the durable archive and cross-node distribution. Exact schema TBD when Run phase starts.
 
 ### Domain Extension Pattern
 
@@ -217,110 +227,41 @@ If a domain truly needs domain-specific columns, it adds a **companion table** (
 
 ## Knowledge Schema
 
-All types use Postgres-native types in v0. Column names are snake_case to match existing Drizzle conventions. The schema is backend-agnostic — these same tables map to Dolt when the adapter swaps.
+Postgres-native types, snake_case columns, Drizzle conventions. Doltgres is Postgres-compatible, so these work unchanged. The schema is a **starter kit** — tables are added as the node's needs grow.
 
-### `strategies` — named decision approaches
+### `knowledge` — domain-specific facts and claims (MVP)
 
-| Column        | Type        | Constraints            | Description                                    |
-| ------------- | ----------- | ---------------------- | ---------------------------------------------- |
-| `id`          | text        | PK                     | Human-readable slug: `poly-calibrated-analyst` |
-| `domain`      | text        | NOT NULL               | `prediction-market`, `infrastructure`, etc.    |
-| `name`        | text        | NOT NULL               | Display name                                   |
-| `description` | text        |                        | What this strategy does and when to use it     |
-| `active`      | boolean     | NOT NULL, default true | Is this in rotation                            |
-| `created_at`  | timestamptz | NOT NULL, default now  |                                                |
+The immediately most valuable table. Curated domain knowledge that agents reference during reasoning.
 
-### `strategy_versions` — versioned strategy content
+| Column           | Type        | Constraints           | Description                                                     |
+| ---------------- | ----------- | --------------------- | --------------------------------------------------------------- |
+| `id`             | text        | PK                    | Deterministic or human-readable                                 |
+| `domain`         | text        | NOT NULL              | `prediction-market`, `reservations`, `infrastructure`, etc.     |
+| `entity_id`      | text        |                       | Stable subject key (optional — not all knowledge has a subject) |
+| `title`          | text        | NOT NULL              | Human-readable summary                                          |
+| `content`        | text        | NOT NULL              | The knowledge claim or fact                                     |
+| `confidence_pct` | integer     |                       | 0–100 (null if not applicable)                                  |
+| `source_type`    | text        | NOT NULL              | `human`, `analysis_signal`, `external`, `derived`               |
+| `source_ref`     | text        |                       | Pointer to origin (signal ID, URL, paper, etc.)                 |
+| `tags`           | jsonb       |                       | Searchable tags                                                 |
+| `created_at`     | timestamptz | NOT NULL, default now |                                                                 |
 
-| Column        | Type        | Constraints               | Description                                       |
-| ------------- | ----------- | ------------------------- | ------------------------------------------------- |
-| `id`          | text        | PK                        | `{strategy_id}:v{n}`                              |
-| `strategy_id` | text        | FK → strategies, NOT NULL |                                                   |
-| `version`     | integer     | NOT NULL                  | Monotonic within strategy                         |
-| `prompt_ref`  | text        |                           | FK → prompt_defs — which prompt this version uses |
-| `params`      | jsonb       |                           | Domain-specific parameters (thresholds, weights)  |
-| `notes`       | text        |                           | What changed and why                              |
-| `created_at`  | timestamptz | NOT NULL, default now     |                                                   |
+Examples:
 
-**Unique:** `(strategy_id, version)`
+- `{ domain: "prediction-market", title: "Fed rate cut base rate", content: "Historical frequency of Fed rate cuts in election years is ~35%", source_type: "external", source_ref: "https://..." }`
+- `{ domain: "reservations", title: "Le Bernardin cancellation pattern", content: "Cancellations spike 24h before for Tuesday-Thursday prime slots", source_type: "derived" }`
 
-### `strategy_evaluations` — eval results
+### Future tables (added when needed)
 
-| Column              | Type         | Constraints                      | Description                     |
-| ------------------- | ------------ | -------------------------------- | ------------------------------- |
-| `id`                | text         | PK                               |                                 |
-| `strategy_version`  | text         | FK → strategy_versions, NOT NULL |                                 |
-| `eval_type`         | text         | NOT NULL                         | `backtest`, `live`, `manual`    |
-| `sample_size`       | integer      | NOT NULL                         |                                 |
-| `accuracy_pct`      | numeric(5,2) |                                  | 0–100                           |
-| `calibration_error` | numeric(6,4) |                                  | Mean absolute calibration error |
-| `edge_bps`          | integer      |                                  | Average edge in basis points    |
-| `details`           | jsonb        |                                  | Full eval breakdown             |
-| `evaluated_at`      | timestamptz  | NOT NULL                         |                                 |
+**Walk phase — strategies:**
 
-### `prompt_defs` — system prompt definitions
+- `strategies` — named decision approaches
+- `strategy_versions` — versioned params, thresholds, notes
+- `strategy_evaluations` — eval results vs outcomes
 
-| Column    | Type | Constraints | Description                          |
-| --------- | ---- | ----------- | ------------------------------------ |
-| `id`      | text | PK          | Human-readable slug                  |
-| `domain`  | text | NOT NULL    |                                      |
-| `purpose` | text | NOT NULL    | `synthesis`, `enrichment`, `scoring` |
-| `name`    | text | NOT NULL    |                                      |
+**Run phase — prompts (with Langfuse):**
 
-### `prompt_versions` — versioned prompt content
-
-| Column        | Type         | Constraints                | Description                              |
-| ------------- | ------------ | -------------------------- | ---------------------------------------- |
-| `id`          | text         | PK                         | `{prompt_id}:v{n}`                       |
-| `prompt_id`   | text         | FK → prompt_defs, NOT NULL |                                          |
-| `version`     | integer      | NOT NULL                   | Monotonic within prompt                  |
-| `system_text` | text         | NOT NULL                   | The actual system prompt                 |
-| `model`       | text         |                            | Target model (for model-specific tuning) |
-| `temperature` | numeric(3,2) |                            |                                          |
-| `notes`       | text         |                            | What changed and why                     |
-| `created_at`  | timestamptz  | NOT NULL, default now      |                                          |
-
-**Unique:** `(prompt_id, version)`
-
-### `evidence_refs` — curated external pointers
-
-| Column        | Type        | Constraints           | Description                                 |
-| ------------- | ----------- | --------------------- | ------------------------------------------- |
-| `id`          | text        | PK                    |                                             |
-| `domain`      | text        | NOT NULL              |                                             |
-| `title`       | text        | NOT NULL              |                                             |
-| `url`         | text        |                       |                                             |
-| `source_type` | text        | NOT NULL              | `paper`, `dataset`, `api`, `news`, `expert` |
-| `summary`     | text        |                       | Why this evidence matters                   |
-| `tags`        | jsonb       |                       | Searchable tags                             |
-| `added_at`    | timestamptz | NOT NULL, default now |                                             |
-
-### `playbooks` — operational runbooks
-
-| Column         | Type    | Constraints            | Description                |
-| -------------- | ------- | ---------------------- | -------------------------- |
-| `id`           | text    | PK                     |                            |
-| `domain`       | text    | NOT NULL               |                            |
-| `name`         | text    | NOT NULL               |                            |
-| `trigger`      | text    | NOT NULL               | When this playbook applies |
-| `steps`        | jsonb   | NOT NULL               | Ordered action steps       |
-| `strategy_ref` | text    |                        | FK → strategies (optional) |
-| `active`       | boolean | NOT NULL, default true |                            |
-
-### `knowledge_claims` — curated assertions
-
-| Column           | Type        | Constraints           | Description                                            |
-| ---------------- | ----------- | --------------------- | ------------------------------------------------------ |
-| `id`             | text        | PK                    |                                                        |
-| `domain`         | text        | NOT NULL              |                                                        |
-| `entity_id`      | text        | NOT NULL              | Stable subject key (same namespace as awareness plane) |
-| `claim`          | text        | NOT NULL              | The assertion                                          |
-| `confidence_pct` | integer     | NOT NULL              | 0–100                                                  |
-| `source_type`    | text        | NOT NULL              | `analysis_signal`, `human`, `external`, `derived`      |
-| `source_ref`     | text        |                       | Pointer to origin (signal ID, URL, etc.)               |
-| `valid_from`     | timestamptz |                       |                                                        |
-| `valid_until`    | timestamptz |                       |                                                        |
-| `created_at`     | timestamptz | NOT NULL, default now |                                                        |
+- Versioned prompts live in Langfuse for prompt engineering workflows. Doltgres stores the durable archive for cross-node distribution. Schema TBD when Run phase starts.
 
 ---
 
@@ -328,33 +269,26 @@ All types use Postgres-native types in v0. Column names are snake_case to match 
 
 ```typescript
 interface KnowledgeStorePort {
-  // Read operations
-  getStrategy(id: string): Promise<Strategy | null>;
-  listStrategies(domain: string): Promise<Strategy[]>;
-  getLatestStrategyVersion(strategyId: string): Promise<StrategyVersion | null>;
-  getPromptVersion(
-    promptId: string,
-    version?: number
-  ): Promise<PromptVersion | null>;
-  getPlaybooks(domain: string): Promise<Playbook[]>;
-  getEvidenceRefs(domain: string, tags?: string[]): Promise<EvidenceRef[]>;
+  // Read
+  getKnowledge(id: string): Promise<Knowledge | null>;
+  listKnowledge(domain: string, tags?: string[]): Promise<Knowledge[]>;
+  searchKnowledge(domain: string, query: string): Promise<Knowledge[]>;
 
-  // Write operations
-  createStrategy(strategy: NewStrategy): Promise<Strategy>;
-  addStrategyVersion(version: NewStrategyVersion): Promise<StrategyVersion>;
-  addPromptVersion(version: NewPromptVersion): Promise<PromptVersion>;
-  recordEvaluation(eval: NewStrategyEvaluation): Promise<StrategyEvaluation>;
-  addEvidenceRef(ref: NewEvidenceRef): Promise<EvidenceRef>;
-  addKnowledgeClaim(claim: NewKnowledgeClaim): Promise<KnowledgeClaim>;
+  // Write
+  addKnowledge(entry: NewKnowledge): Promise<Knowledge>;
+  updateKnowledge(
+    id: string,
+    update: Partial<NewKnowledge>
+  ): Promise<Knowledge>;
 
-  // Version info (backend-dependent semantics)
-  currentVersion(): Promise<string>;
+  // Doltgres versioning
+  commit(message: string): Promise<string>; // returns commit hash
+  log(limit?: number): Promise<DoltCommit[]>;
+  currentCommit(): Promise<string>;
 }
 ```
 
-**v0 adapter:** `DrizzleKnowledgeStoreAdapter` — uses `@cogni/db-client` against Postgres. `currentVersion()` returns a content hash or timestamp.
-
-**v1 adapter:** `DoltKnowledgeStoreAdapter` — uses `mysql2` against Dolt server. `currentVersion()` returns Dolt commit hash. Adds `diffVersions()`, `checkoutBranch()`, `mergeBranch()` to extended interface.
+Adapter: `DoltgresKnowledgeStoreAdapter` — Drizzle for reads/writes, raw SQL for `dolt_commit()`/`dolt_log()`/`hashof('HEAD')`. Scoped to the node's database.
 
 ---
 
