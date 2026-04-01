@@ -64,18 +64,19 @@ Plain Postgres can serve this with append-only version rows, but it gets clumsy 
 
 ```
 ┌────────────────────────────────────────────────────────┐
-│              AWARENESS PLANE (Postgres)                 │
-│         "What the AI sees and decides right now"        │
+│                     POSTGRES                            │
+│  "Hot + immutable data, users, operations"             │
 │                                                        │
-│  observation_events    (append-only measurements)      │
-│  analysis_runs         (when/why AI was invoked)       │
-│  analysis_signals      (AI conclusions + action level) │
-│  analysis_outcomes     (ground truth for calibration)  │
-│  base_rates            (live calibration frequencies)  │
+│  Existing: auth, billing, ai, scheduling, identity,   │
+│            reservations, attribution, ingestion        │
+│            (see db-schema/src/*.ts)                    │
 │                                                        │
-│  Tempo: seconds to minutes                             │
-│  Mutability: append-only (immutable facts)             │
-│  Owner: monitoring-engine awareness pipeline           │
+│  Awareness tables (monitoring-engine spec, not yet     │
+│  implemented): observation_events, analysis_runs,     │
+│  analysis_signals, analysis_outcomes, base_rates      │
+│                                                        │
+│  Tempo: real-time to minutes                           │
+│  Mutability: append-only / operational                 │
 └──────────────────────────┬─────────────────────────────┘
                            │
                     Promotion Gate
@@ -83,23 +84,20 @@ Plain Postgres can serve this with append-only version rows, but it gets clumsy 
                            │
                            ▼
 ┌────────────────────────────────────────────────────────┐
-│              KNOWLEDGE PLANE (Doltgres)                 │
-│         "What the AI has learned over time"             │
+│                    DOLTGRES                              │
+│  "Compounding memory — what the AI has learned"        │
 │                                                        │
-│  strategies            (named decision approaches)     │
-│  strategy_versions     (versioned strategy content)    │
-│  strategy_evaluations  (eval results vs outcomes)      │
-│  prompt_defs           (system prompt definitions)     │
-│  prompt_versions       (versioned prompt content)      │
-│  evidence_refs         (curated external pointers)     │
-│  playbooks             (operational runbooks)          │
-│  knowledge_claims      (curated assertions)            │
+│  Starter kit: knowledge, strategies, ...               │
+│  Grows as the node accumulates expertise               │
 │                                                        │
 │  Tempo: hours to days                                  │
 │  Mutability: versioned (dolt_commit, dolt_log, diff)   │
-│  Owner: knowledge curation pipeline                    │
 └────────────────────────────────────────────────────────┘
 ```
+
+**Postgres** is for hot/immutable data and operational concerns: user accounts, billing, auth, scheduling, append-only ingestion receipts, and (per [monitoring-engine spec](./monitoring-engine.md)) the awareness pipeline tables. These are defined in `packages/db-schema/src/` and the monitoring-engine spec respectively — this spec does not own them.
+
+**Doltgres** is for compounding memory: domain-specific knowledge, strategies, and (eventually) versioned prompts that accumulate and evolve over time. Version-controlled natively. The table set is a starter kit that grows as the node matures — not a fixed schema.
 
 ---
 
@@ -175,39 +173,31 @@ This is the critical architectural boundary. Getting it wrong means either:
 - Poly-specific data leaks into the generic template (every fork inherits prediction market tables), or
 - Generic capabilities get trapped in domain-specific code (other domains can't reuse strategy versioning)
 
-### What stays in the Awareness Plane (Postgres, domain-specific)
+### What stays in Postgres
 
-The **Polymarket domain pack** owns all hot operational data. This lives in `db-schema/ingestion` (or `db-schema/poly` for domain tables) and follows the monitoring-engine spec:
+Everything that exists today (`packages/db-schema/src/*.ts`) plus the awareness pipeline tables defined in the [monitoring-engine spec](./monitoring-engine.md). This spec does not define or own any Postgres tables — it only defines the Doltgres knowledge tables below.
 
-| Data                          | Why it's awareness, not knowledge                |
-| ----------------------------- | ------------------------------------------------ |
-| Market price observations     | Raw measurements — append-only facts             |
-| Volume/spread/depth snapshots | Raw measurements — append-only facts             |
-| Trigger evaluations           | Ephemeral — not even persisted                   |
-| Analysis runs                 | Operational — "AI was invoked at 14:32"          |
-| Analysis signals              | Operational — "AI concluded X with Y confidence" |
-| Market resolutions (outcomes) | Operational — ground truth for calibration       |
-| Live base rates               | Operational — current calibration state          |
-| Cross-platform spread alerts  | Operational — ephemeral trigger output           |
+### What lives in Doltgres (knowledge plane)
 
-This data is **high-frequency, append-only, domain-specific**. It belongs in Postgres where the awareness pipeline already lives.
+Curated expertise that compounds over time. The table set is a **starter kit** — not a fixed schema. New tables are added as the node matures. Domain specificity lives in row content, not table structure.
 
-### What lives in the Knowledge Plane (node-template)
+**MVP — domain knowledge (immediate value):**
 
-The **knowledge plane** owns curated expertise that accumulates and evolves. This is the generic capability that every node fork inherits:
+| Table       | Purpose                                                               |
+| ----------- | --------------------------------------------------------------------- |
+| `knowledge` | Domain-specific facts, claims, and curated assertions with provenance |
 
-| Data                   | Description                                           | Why it's knowledge, not awareness               |
-| ---------------------- | ----------------------------------------------------- | ----------------------------------------------- |
-| `strategies`           | Named decision approaches with metadata               | Evolves over time, needs version history        |
-| `strategy_versions`    | Versioned content: prompt ref, parameters, thresholds | Iterated artifact, diff to compare              |
-| `strategy_evaluations` | Eval results linking strategy versions to outcomes    | Accumulated evidence, informs future selection  |
-| `prompt_defs`          | System prompt definitions with domain + purpose       | Shared across domains, versioned                |
-| `prompt_versions`      | Actual prompt text, model params, temperature         | Most-iterated artifact — needs version tracking |
-| `evidence_refs`        | Curated pointers to research, papers, data sources    | Slowly accumulated, annotated, shared           |
-| `playbooks`            | Operational runbooks: "if X pattern, consider Y"      | Operational expertise, evolves with experience  |
-| `knowledge_claims`     | Curated assertions with provenance + confidence       | Mutable (correctable), needs version history    |
+**Next — strategies (Walk phase):**
 
-This data is **low-frequency, mutable, domain-agnostic in structure**. Domains add domain-specific _content_ (a prediction market strategy vs an infra monitoring strategy) but the _schema_ is generic.
+| Table                  | Purpose                                      |
+| ---------------------- | -------------------------------------------- |
+| `strategies`           | Named decision approaches with metadata      |
+| `strategy_versions`    | Versioned content: params, thresholds, notes |
+| `strategy_evaluations` | Eval results linking versions to outcomes    |
+
+**Later — prompts (Run phase, with Langfuse integration):**
+
+Versioned prompts live in Langfuse for prompt engineering workflows. Doltgres stores the durable archive and cross-node distribution. Exact schema TBD when Run phase starts.
 
 ### Domain Extension Pattern
 
@@ -237,110 +227,41 @@ If a domain truly needs domain-specific columns, it adds a **companion table** (
 
 ## Knowledge Schema
 
-All types use Postgres-native types in v0. Column names are snake_case to match existing Drizzle conventions. The schema is backend-agnostic — these same tables map to Dolt when the adapter swaps.
+Postgres-native types, snake_case columns, Drizzle conventions. Doltgres is Postgres-compatible, so these work unchanged. The schema is a **starter kit** — tables are added as the node's needs grow.
 
-### `strategies` — named decision approaches
+### `knowledge` — domain-specific facts and claims (MVP)
 
-| Column        | Type        | Constraints            | Description                                    |
-| ------------- | ----------- | ---------------------- | ---------------------------------------------- |
-| `id`          | text        | PK                     | Human-readable slug: `poly-calibrated-analyst` |
-| `domain`      | text        | NOT NULL               | `prediction-market`, `infrastructure`, etc.    |
-| `name`        | text        | NOT NULL               | Display name                                   |
-| `description` | text        |                        | What this strategy does and when to use it     |
-| `active`      | boolean     | NOT NULL, default true | Is this in rotation                            |
-| `created_at`  | timestamptz | NOT NULL, default now  |                                                |
+The immediately most valuable table. Curated domain knowledge that agents reference during reasoning.
 
-### `strategy_versions` — versioned strategy content
+| Column           | Type        | Constraints           | Description                                                     |
+| ---------------- | ----------- | --------------------- | --------------------------------------------------------------- |
+| `id`             | text        | PK                    | Deterministic or human-readable                                 |
+| `domain`         | text        | NOT NULL              | `prediction-market`, `reservations`, `infrastructure`, etc.     |
+| `entity_id`      | text        |                       | Stable subject key (optional — not all knowledge has a subject) |
+| `title`          | text        | NOT NULL              | Human-readable summary                                          |
+| `content`        | text        | NOT NULL              | The knowledge claim or fact                                     |
+| `confidence_pct` | integer     |                       | 0–100 (null if not applicable)                                  |
+| `source_type`    | text        | NOT NULL              | `human`, `analysis_signal`, `external`, `derived`               |
+| `source_ref`     | text        |                       | Pointer to origin (signal ID, URL, paper, etc.)                 |
+| `tags`           | jsonb       |                       | Searchable tags                                                 |
+| `created_at`     | timestamptz | NOT NULL, default now |                                                                 |
 
-| Column        | Type        | Constraints               | Description                                       |
-| ------------- | ----------- | ------------------------- | ------------------------------------------------- |
-| `id`          | text        | PK                        | `{strategy_id}:v{n}`                              |
-| `strategy_id` | text        | FK → strategies, NOT NULL |                                                   |
-| `version`     | integer     | NOT NULL                  | Monotonic within strategy                         |
-| `prompt_ref`  | text        |                           | FK → prompt_defs — which prompt this version uses |
-| `params`      | jsonb       |                           | Domain-specific parameters (thresholds, weights)  |
-| `notes`       | text        |                           | What changed and why                              |
-| `created_at`  | timestamptz | NOT NULL, default now     |                                                   |
+Examples:
 
-**Unique:** `(strategy_id, version)`
+- `{ domain: "prediction-market", title: "Fed rate cut base rate", content: "Historical frequency of Fed rate cuts in election years is ~35%", source_type: "external", source_ref: "https://..." }`
+- `{ domain: "reservations", title: "Le Bernardin cancellation pattern", content: "Cancellations spike 24h before for Tuesday-Thursday prime slots", source_type: "derived" }`
 
-### `strategy_evaluations` — eval results
+### Future tables (added when needed)
 
-| Column              | Type         | Constraints                      | Description                     |
-| ------------------- | ------------ | -------------------------------- | ------------------------------- |
-| `id`                | text         | PK                               |                                 |
-| `strategy_version`  | text         | FK → strategy_versions, NOT NULL |                                 |
-| `eval_type`         | text         | NOT NULL                         | `backtest`, `live`, `manual`    |
-| `sample_size`       | integer      | NOT NULL                         |                                 |
-| `accuracy_pct`      | numeric(5,2) |                                  | 0–100                           |
-| `calibration_error` | numeric(6,4) |                                  | Mean absolute calibration error |
-| `edge_bps`          | integer      |                                  | Average edge in basis points    |
-| `details`           | jsonb        |                                  | Full eval breakdown             |
-| `evaluated_at`      | timestamptz  | NOT NULL                         |                                 |
+**Walk phase — strategies:**
 
-### `prompt_defs` — system prompt definitions
+- `strategies` — named decision approaches
+- `strategy_versions` — versioned params, thresholds, notes
+- `strategy_evaluations` — eval results vs outcomes
 
-| Column    | Type | Constraints | Description                          |
-| --------- | ---- | ----------- | ------------------------------------ |
-| `id`      | text | PK          | Human-readable slug                  |
-| `domain`  | text | NOT NULL    |                                      |
-| `purpose` | text | NOT NULL    | `synthesis`, `enrichment`, `scoring` |
-| `name`    | text | NOT NULL    |                                      |
+**Run phase — prompts (with Langfuse):**
 
-### `prompt_versions` — versioned prompt content
-
-| Column        | Type         | Constraints                | Description                              |
-| ------------- | ------------ | -------------------------- | ---------------------------------------- |
-| `id`          | text         | PK                         | `{prompt_id}:v{n}`                       |
-| `prompt_id`   | text         | FK → prompt_defs, NOT NULL |                                          |
-| `version`     | integer      | NOT NULL                   | Monotonic within prompt                  |
-| `system_text` | text         | NOT NULL                   | The actual system prompt                 |
-| `model`       | text         |                            | Target model (for model-specific tuning) |
-| `temperature` | numeric(3,2) |                            |                                          |
-| `notes`       | text         |                            | What changed and why                     |
-| `created_at`  | timestamptz  | NOT NULL, default now      |                                          |
-
-**Unique:** `(prompt_id, version)`
-
-### `evidence_refs` — curated external pointers
-
-| Column        | Type        | Constraints           | Description                                 |
-| ------------- | ----------- | --------------------- | ------------------------------------------- |
-| `id`          | text        | PK                    |                                             |
-| `domain`      | text        | NOT NULL              |                                             |
-| `title`       | text        | NOT NULL              |                                             |
-| `url`         | text        |                       |                                             |
-| `source_type` | text        | NOT NULL              | `paper`, `dataset`, `api`, `news`, `expert` |
-| `summary`     | text        |                       | Why this evidence matters                   |
-| `tags`        | jsonb       |                       | Searchable tags                             |
-| `added_at`    | timestamptz | NOT NULL, default now |                                             |
-
-### `playbooks` — operational runbooks
-
-| Column         | Type    | Constraints            | Description                |
-| -------------- | ------- | ---------------------- | -------------------------- |
-| `id`           | text    | PK                     |                            |
-| `domain`       | text    | NOT NULL               |                            |
-| `name`         | text    | NOT NULL               |                            |
-| `trigger`      | text    | NOT NULL               | When this playbook applies |
-| `steps`        | jsonb   | NOT NULL               | Ordered action steps       |
-| `strategy_ref` | text    |                        | FK → strategies (optional) |
-| `active`       | boolean | NOT NULL, default true |                            |
-
-### `knowledge_claims` — curated assertions
-
-| Column           | Type        | Constraints           | Description                                            |
-| ---------------- | ----------- | --------------------- | ------------------------------------------------------ |
-| `id`             | text        | PK                    |                                                        |
-| `domain`         | text        | NOT NULL              |                                                        |
-| `entity_id`      | text        | NOT NULL              | Stable subject key (same namespace as awareness plane) |
-| `claim`          | text        | NOT NULL              | The assertion                                          |
-| `confidence_pct` | integer     | NOT NULL              | 0–100                                                  |
-| `source_type`    | text        | NOT NULL              | `analysis_signal`, `human`, `external`, `derived`      |
-| `source_ref`     | text        |                       | Pointer to origin (signal ID, URL, etc.)               |
-| `valid_from`     | timestamptz |                       |                                                        |
-| `valid_until`    | timestamptz |                       |                                                        |
-| `created_at`     | timestamptz | NOT NULL, default now |                                                        |
+- Versioned prompts live in Langfuse for prompt engineering workflows. Doltgres stores the durable archive for cross-node distribution. Schema TBD when Run phase starts.
 
 ---
 
@@ -348,33 +269,26 @@ All types use Postgres-native types in v0. Column names are snake_case to match 
 
 ```typescript
 interface KnowledgeStorePort {
-  // Read operations
-  getStrategy(id: string): Promise<Strategy | null>;
-  listStrategies(domain: string): Promise<Strategy[]>;
-  getLatestStrategyVersion(strategyId: string): Promise<StrategyVersion | null>;
-  getPromptVersion(
-    promptId: string,
-    version?: number
-  ): Promise<PromptVersion | null>;
-  getPlaybooks(domain: string): Promise<Playbook[]>;
-  getEvidenceRefs(domain: string, tags?: string[]): Promise<EvidenceRef[]>;
+  // Read
+  getKnowledge(id: string): Promise<Knowledge | null>;
+  listKnowledge(domain: string, tags?: string[]): Promise<Knowledge[]>;
+  searchKnowledge(domain: string, query: string): Promise<Knowledge[]>;
 
-  // Write operations
-  createStrategy(strategy: NewStrategy): Promise<Strategy>;
-  addStrategyVersion(version: NewStrategyVersion): Promise<StrategyVersion>;
-  addPromptVersion(version: NewPromptVersion): Promise<PromptVersion>;
-  recordEvaluation(eval: NewStrategyEvaluation): Promise<StrategyEvaluation>;
-  addEvidenceRef(ref: NewEvidenceRef): Promise<EvidenceRef>;
-  addKnowledgeClaim(claim: NewKnowledgeClaim): Promise<KnowledgeClaim>;
+  // Write
+  addKnowledge(entry: NewKnowledge): Promise<Knowledge>;
+  updateKnowledge(
+    id: string,
+    update: Partial<NewKnowledge>
+  ): Promise<Knowledge>;
 
-  // Version info (backend-dependent semantics)
-  currentVersion(): Promise<string>;
+  // Doltgres versioning
+  commit(message: string): Promise<string>; // returns commit hash
+  log(limit?: number): Promise<DoltCommit[]>;
+  currentCommit(): Promise<string>;
 }
 ```
 
-**v0 adapter:** `DrizzleKnowledgeStoreAdapter` — uses `@cogni/db-client` against Postgres. `currentVersion()` returns a content hash or timestamp.
-
-**v1 adapter:** `DoltKnowledgeStoreAdapter` — uses `mysql2` against Dolt server. `currentVersion()` returns Dolt commit hash. Adds `diffVersions()`, `checkoutBranch()`, `mergeBranch()` to extended interface.
+Adapter: `DoltgresKnowledgeStoreAdapter` — Drizzle for reads/writes, raw SQL for `dolt_commit()`/`dolt_log()`/`hashof('HEAD')`. Scoped to the node's database.
 
 ---
 
@@ -456,13 +370,12 @@ Each Cogni node has its own agent graphs package (domain logic) and its own know
 │  Published as: @cogni/knowledge-seeds or Doltgres remote    │
 │  Class: public/shared                                        │
 └──────────────────────────┬───────────────────────────────────┘
-                           │ seed (v0) / pull (v1)
-                           │ node decides when
+                           │ seed / pull (node decides when)
                            ▼
 ┌──────────────────────────────────────────────────────────────┐
 │  NODE-LOCAL SOVEREIGN KNOWLEDGE (per-node, isolated)         │
-│  Own Postgres DB (v0) / own Dolt database (v1)              │
-│  Base (pulled from operator) + private tuned knowledge      │
+│  Own Doltgres database (knowledge_{node_name})              │
+│  Base (seeded from operator) + private tuned knowledge      │
 │  Class: node-private (+ merged public/shared)                │
 └──────────────────────────┬───────────────────────────────────┘
                            │ KnowledgeStorePort
@@ -483,181 +396,95 @@ Each Cogni node has its own agent graphs package (domain logic) and its own know
 
 **Key separation:** The agent graphs package is **code** (the logic). The knowledge store is **data** (the expertise). The awareness plane is **operational data** (what's happening now). A node's graphs read strategies and prompts from its local knowledge store — they never import them as code constants.
 
-### v0: Knowledge Seeds (Postgres, zero new infra)
+### Shared Doltgres Server, Per-Node Databases
 
-The operator publishes a `@cogni/knowledge-seeds` package containing SQL seed files:
-
-```
-packages/knowledge-seeds/
-  src/
-    strategies/prediction-market.sql   ← base strategies for poly domain
-    strategies/infrastructure.sql      ← base strategies for infra domain
-    prompts/poly-synth.sql             ← system prompts for market analysis
-    evidence/base-refs.sql             ← evidence library
-    index.ts                           ← export seed paths for programmatic use
-```
-
-**At node provision** (`provisionNode` workflow):
-
-1. Node's Postgres database is created (existing step — already per-node isolated)
-2. Drizzle migrations create knowledge tables (from task.0231)
-3. Seed step runs: `pnpm knowledge:seed` imports base strategies + prompts
-4. Seeded rows are now node-private — the node owns them
-
-**Upstream updates:**
-
-- Operator bumps `@cogni/knowledge-seeds` version
-- Node decides when to pull: `pnpm upgrade @cogni/knowledge-seeds && pnpm knowledge:seed --upsert`
-- Seed script upserts new versions (existing rows untouched, new versions appended)
-- `UPGRADE_AUTONOMY` preserved — node is never forced to update
-
-**Node customization:**
-
-- Node adds its own rows via `KnowledgeStorePort.addStrategyVersion()` etc.
-- Custom strategies have `domain` matching the node's domain
-- Custom prompts are tuned for the node's specific use case
-- All node-written knowledge is **node-private** by default
-
-### v1: Shared Dolt Server, Per-Node Databases
-
-When the trigger conditions are met, knowledge migrates from Postgres to Dolt. One shared Dolt server operationally, but **per-node databases** — not branch-per-node, not one shared database.
-
-**One server, per-node databases:**
+One Doltgres server process. Each node gets its own database. Same pattern as Postgres (one server, `CREATE DATABASE` per node).
 
 ```
-┌─────────────────────────────────────────────────────────────┐
-│ Shared Dolt Server (operational — one process, shared infra) │
-│                                                             │
-│  knowledge_base          ← operator base knowledge          │
-│  (read-only for nodes)     upstream remote / seed source    │
-│                                                             │
-│  knowledge_poly          ← poly node's sovereign store      │
-│    main                    production knowledge             │
-│    └── experiment/         prompt experiments (node-only)   │
-│        prompt-v4                                            │
-│                                                             │
-│  knowledge_infra         ← infra node's sovereign store     │
-│    main                    production knowledge             │
-│    └── experiment/         threshold experiments (node-only) │
-│        lower-thresholds                                     │
-│                                                             │
-│  knowledge_commons       ← optional shared published repo   │
-│    (nodes explicitly promote validated knowledge here)      │
-└─────────────────────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────┐
+│ Shared Doltgres Server                                   │
+│                                                         │
+│  knowledge_operator    ← operator base knowledge         │
+│                          ships with node-template         │
+│                                                         │
+│  knowledge_poly        ← poly node's sovereign store     │
+│                          seeded from knowledge_operator   │
+│                                                         │
+│  knowledge_resy        ← resy node's sovereign store     │
+│                          seeded from knowledge_operator   │
+└─────────────────────────────────────────────────────────┘
 ```
 
-**Why per-node databases, not branches?**
+**Why per-node databases?**
 
-- **DATA_SOVEREIGNTY** — a node's database is its own. No other node can `USE` it without explicit access grants. Branch-per-node in a single database means any session can `dolt_checkout` any branch — sovereignty is advisory, not enforced.
-- **KNOWLEDGE_SOVEREIGN_BY_DEFAULT** — isolation is the default, sharing is explicit. Per-node databases make this structural, not policy-based.
-- **Self-hosted exit** — a node leaving the monorepo takes its Dolt database as a standalone repo. No branch extraction needed.
-- **Operational simplicity** — one Dolt server process, multiple databases. Same pattern as Postgres (one server, `CREATE DATABASE knowledge_{node_short_id}`).
+- **DATA_SOVEREIGNTY** — a node's database is its own. Isolation is structural, not policy.
+- **KNOWLEDGE_SOVEREIGN_BY_DEFAULT** — no default visibility across nodes.
+- **Self-hosted exit** — node takes its Doltgres database as a standalone repo with full commit history.
 
-**At node provision** (`provisionNode` workflow, enhanced):
+### Node Provision Flow
 
 1. Node's Postgres database created (awareness plane — existing step)
-2. Node's Dolt database created: `CREATE DATABASE knowledge_{node_short_id}`
-3. Operator base knowledge seeded into node's database (SQL import from `knowledge_base` or Dolt remote)
-4. `KnowledgeStorePort` adapter connects to `knowledge_{node_short_id}`
+2. Node's Doltgres knowledge database created: `CREATE DATABASE knowledge_{node_name}`
+3. Schema applied (same Drizzle DDL — Doltgres is Postgres-compatible)
+4. Base knowledge seeded from `knowledge_operator`
+5. Initial commit: `SELECT dolt_commit('-Am', 'seeded from knowledge_operator')`
+6. `KnowledgeStorePort` adapter connects to `knowledge_{node_name}`
 
-**Operator base as upstream remote:**
+### Node Customization
 
-```sql
--- Node pulls base knowledge updates from operator
-USE knowledge_poly;
-CALL dolt_remote('add', 'operator', 'dolthub/cogni-dao/knowledge-base');
-CALL dolt_pull('operator', 'main');
-CALL dolt_merge('operator/main');
-CALL dolt_commit('-m', 'pulled operator base knowledge update');
-```
-
-**Prompt experimentation** (branches within node's own database):
-
-```sql
-USE knowledge_poly;
-CALL dolt_branch('experiment/prompt-v4', 'main');
-CALL dolt_checkout('experiment/prompt-v4');
--- ... modify prompts, run evals ...
-CALL dolt_checkout('main');
-CALL dolt_merge('experiment/prompt-v4');
-CALL dolt_commit('-m', 'prompt v4 merged — 12% calibration improvement');
-```
-
-**Publishing to commons** (explicit promotion, not default):
-
-```sql
--- Node explicitly pushes validated knowledge to shared commons
-USE knowledge_poly;
-CALL dolt_remote('add', 'commons', 'dolthub/cogni-dao/knowledge-commons');
-CALL dolt_push('commons', 'main');
--- Operator reviews before merging into knowledge_base
-```
-
-**Self-hosted node exit path:** Node takes `knowledge_{node_short_id}` as a standalone Dolt repo. `dolt backup` or `dolt clone` to local instance. Fork freedom preserved — the node's entire knowledge history comes with it.
-
-### When to Trigger v1
-
-The concrete trigger for Dolt migration — **all three must hold:**
-
-1. **Multiple active nodes** — at least 2 nodes need to share/inherit knowledge
-2. **Active prompt experimentation** — version rows aren't sufficient; need branch-per-experiment
-3. **Proven v0 knowledge flow** — strategies and prompts are actually being read from the knowledge store (not hardcoded)
-
-Until then, Postgres + knowledge-seeds is simpler and sufficient. The `KnowledgeStorePort` makes the swap transparent to consumers.
+- Node adds rows via `KnowledgeStorePort.addStrategyVersion()` etc. — standard Drizzle writes
+- Custom strategies have `domain` matching the node's domain
+- After writes, node commits: `SELECT dolt_commit('-Am', 'added poly strategy v2')`
+- All node-written knowledge is **node-private** by default
 
 ### Pinning Analysis to Knowledge State
 
-Every analysis run in the awareness plane records which knowledge version it used:
-
-```
-analysis_runs.knowledge_version = "v7"        -- v0: version string
-analysis_runs.knowledge_version = "abc123def"  -- v1: Dolt commit hash
+```sql
+SELECT hashof('HEAD') as knowledge_commit;
+-- Store in analysis_runs.knowledge_commit for reproducibility
 ```
 
-This enables reproducibility: given the same observations + the same knowledge version, the analysis should produce the same signals.
+Given same observations + same knowledge commit → same analysis outputs.
+
+### Future: Branching, Remotes, Sharing
+
+Not in MVP. Once comfortable with single-branch commit/log/diff:
+
+- **Branching** — `SELECT dolt_checkout('-b', 'experiment/...')` for prompt experiments within a node's own database
+- **Remotes** — `SELECT dolt_push(...)` / `dolt_pull(...)` for cross-node knowledge sharing
+- **Commons** — optional shared Doltgres remote where nodes explicitly promote validated knowledge
 
 ---
 
 ## Invariants
 
-### Core (all phases)
-
-| Rule                            | Constraint                                                                                                                                                                                  |
-| ------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| AWARENESS_HOT_KNOWLEDGE_COLD    | Live operational data (observations, runs, signals, outcomes) stays in Postgres awareness tables. Curated expertise (strategies, prompts, evaluations, evidence) lives in knowledge tables. |
-| KNOWLEDGE_SOVEREIGN_BY_DEFAULT  | Node production knowledge is local and private by default. Cross-node sharing is explicit promotion, never default visibility. Monorepo code sharing does not imply knowledge sharing.      |
-| PROMOTE_NOT_MIRROR              | Knowledge is promoted from awareness via explicit gate. Only artifacts that are reviewed, repeated, or outcome-backed cross the boundary. Never bulk-copy.                                  |
-| PORT_BEFORE_BACKEND             | All knowledge access goes through `KnowledgeStorePort`. The adapter (Postgres or Dolt) is an implementation detail. Consumers never depend on the storage backend.                          |
-| SCHEMA_GENERIC_CONTENT_SPECIFIC | The knowledge schema is domain-agnostic. Domain specificity lives in row content (`domain` column, `params` JSONB), not in table structure.                                                 |
-| KNOWLEDGE_VERSION_PINNED        | Analysis runs should record their `knowledge_version`. Given same inputs + same knowledge state → same outputs.                                                                             |
-
-### v1-only invariants (deferred until Dolt migration)
-
-| Rule                     | Constraint                                                                                                                  |
-| ------------------------ | --------------------------------------------------------------------------------------------------------------------------- |
-| DOLT_PER_NODE_DATABASE   | Each node gets its own Dolt database (`knowledge_{node_short_id}`). Per-node databases, not branch-per-node in a shared DB. |
-| DOLT_OWNS_VERSIONING     | All knowledge versioning uses Dolt branches/commits. No manual version columns.                                             |
-| FORK_TAKES_KNOWLEDGE     | When a node leaves the monorepo (self-hosts), it takes its Dolt database as a standalone repo with full history.            |
-| SHARING_IS_EXPLICIT_PUSH | Knowledge enters the commons only via explicit `dolt push` to a shared remote. Never by default cohabitation.               |
+| Rule                            | Constraint                                                                                                                                                                  |
+| ------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| AWARENESS_HOT_KNOWLEDGE_COLD    | Live operational data stays in Postgres. Curated expertise lives in Doltgres.                                                                                               |
+| KNOWLEDGE_SOVEREIGN_BY_DEFAULT  | Node knowledge is local and private by default. Cross-node sharing is explicit promotion, never default visibility. Monorepo code sharing does not imply knowledge sharing. |
+| DOLTGRES_PER_NODE_DATABASE      | Each node gets its own Doltgres database (`knowledge_{node_name}`). Per-node databases, not shared tables or branch-per-node.                                               |
+| PROMOTE_NOT_MIRROR              | Knowledge is promoted from awareness via explicit gate. Only reviewed, repeated, or outcome-backed artifacts cross the boundary.                                            |
+| PORT_BEFORE_BACKEND             | All knowledge access goes through `KnowledgeStorePort`. Consumers use standard Drizzle queries.                                                                             |
+| SCHEMA_GENERIC_CONTENT_SPECIFIC | Domain specificity lives in row content (`domain`, `params` JSON), not table structure.                                                                                     |
+| KNOWLEDGE_VERSION_PINNED        | Analysis runs record `knowledge_commit` (Doltgres commit hash). Same inputs + same knowledge → same outputs.                                                                |
+| FORK_TAKES_KNOWLEDGE            | When a node self-hosts, it takes its Doltgres database with full commit history.                                                                                            |
 
 ---
 
 ## Non-Goals
 
 - Replacing Postgres for hot operational data (awareness plane stays where it is)
-- Real-time knowledge updates during analysis (knowledge is read at analysis start, not mid-flight)
+- Branching or remotes in MVP (future — get comfortable with commits first)
+- Real-time knowledge updates during analysis (read at start, not mid-flight)
 - Automatic promotion without any validation gate (human or statistical)
-- Embedding/vector search in the knowledge plane (stays in Postgres with pgvector if needed)
-- Dolt infrastructure in v0 (port abstraction defers this to v1)
+- Embedding/vector search in knowledge plane (stays in Postgres with pgvector if needed)
 
 ## Open Questions
 
-- [ ] Should `knowledge_claims` use the same `entity_id` namespace as `observation_events`? (Likely yes — same stable key, different storage)
-- [ ] Should `analysis_runs.knowledge_version` be added in v0 or deferred?
-- [ ] Should the promotion gate be a Temporal workflow or a simpler cron-based batch?
-- [ ] Dolt driver maturity for Node.js (v1 concern) — mysql2 works, but `dolt_checkout` / `dolt_merge` session semantics need verification through the driver
-- [ ] Dolt server resource footprint — acceptable alongside Postgres in shared cluster?
-- [ ] Branch naming convention — `node/{name}` vs `node/{short_id}`? Must be stable across renames.
+- [ ] Doltgres maturity: verify `dolt_commit`, `dolt_log`, `dolt_diff` work through standard `postgres` driver
+- [ ] Doltgres server resource footprint alongside Postgres in dev stack
+- [ ] Seed mechanism: SQL dump from `knowledge_operator` → `knowledge_{node}`, or Drizzle seeds?
+- [ ] Should the promotion gate be a Temporal workflow or a simpler batch?
 
 ## Related
 
