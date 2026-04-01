@@ -11,8 +11,7 @@
  * @public
  */
 
-import { createSign } from "node:crypto";
-import { normalizeKalshiMarket } from "../../domain/normalizers/kalshi.js";
+import { constants, createSign } from "node:crypto";
 import type {
   ListMarketsParams,
   NormalizedMarket,
@@ -22,12 +21,13 @@ import type {
   MarketProviderConfig,
   MarketProviderPort,
 } from "../../port/market-provider.port.js";
+import { normalizeKalshiMarket } from "./kalshi.normalizer.js";
 import { KalshiMarketsResponseSchema } from "./kalshi.types.js";
 
-const DEFAULT_KALSHI_BASE_URL = "https://trading-api.kalshi.com/trade-api/v2";
+const DEFAULT_KALSHI_BASE_URL = "https://api.elections.kalshi.com/trade-api/v2";
 
 export interface KalshiAdapterConfig extends MarketProviderConfig {
-  /** Trading API base URL (default: https://trading-api.kalshi.com/trade-api/v2) */
+  /** Trading API base URL (default: https://api.elections.kalshi.com/trade-api/v2) */
   baseUrl?: string;
   /** Required — Kalshi requires auth for all endpoints */
   credentials: MarketCredentials;
@@ -50,7 +50,7 @@ function signRequest(
   return signer.sign(
     {
       key: rsaPrivateKeyPem,
-      padding: 6, // RSA_PKCS1_PSS_PADDING
+      padding: constants.RSA_PKCS1_PSS_PADDING,
       saltLength: 32, // SHA-256 digest length
     },
     "base64"
@@ -94,13 +94,10 @@ export class KalshiAdapter implements MarketProviderPort {
   }
 
   async listMarkets(params?: ListMarketsParams): Promise<NormalizedMarket[]> {
-    const path = "/markets";
-    const url = new URL(path, this.baseUrl);
+    const url = new URL(`${this.baseUrl}/markets`);
     url.searchParams.set("limit", String(params?.limit ?? 100));
 
-    if (params?.activeOnly !== false) {
-      url.searchParams.set("status", "open");
-    }
+    // Kalshi API returns active markets by default (no status filter param)
     if (params?.cursor) {
       url.searchParams.set("cursor", params.cursor);
     }
@@ -108,8 +105,8 @@ export class KalshiAdapter implements MarketProviderPort {
       url.searchParams.set("category", params.category);
     }
 
-    // Auth headers sign the path WITHOUT query params
-    const authHeaders = this.buildAuthHeaders("GET", path);
+    // Auth headers sign the full path WITHOUT query params
+    const authHeaders = this.buildAuthHeaders("GET", url.pathname);
 
     const response = await fetch(url.toString(), {
       method: "GET",

@@ -12,10 +12,10 @@
  */
 
 import { describe, expect, it } from "vitest";
+import { normalizeKalshiMarket } from "../src/adapters/kalshi/kalshi.normalizer.js";
 import type { KalshiRawMarket } from "../src/adapters/kalshi/kalshi.types.js";
+import { normalizePolymarketMarket } from "../src/adapters/polymarket/polymarket.normalizer.js";
 import type { PolymarketRawMarket } from "../src/adapters/polymarket/polymarket.types.js";
-import { normalizeKalshiMarket } from "../src/domain/normalizers/kalshi.js";
-import { normalizePolymarketMarket } from "../src/domain/normalizers/polymarket.js";
 import { NormalizedMarketSchema } from "../src/domain/schemas.js";
 
 const polymarketFixture: PolymarketRawMarket = {
@@ -37,14 +37,14 @@ const polymarketFixture: PolymarketRawMarket = {
 const kalshiFixture: KalshiRawMarket = {
   ticker: "FED-RATE-CUT-JUN",
   title: "Fed cuts rates at June meeting?",
-  category: "Economics",
   event_ticker: "FED-JUN-2026",
-  yes_bid: 60,
-  yes_ask: 64,
-  no_bid: 34,
-  no_ask: 38,
-  volume: 50000,
-  status: "open",
+  yes_bid_dollars: "0.6000",
+  yes_ask_dollars: "0.6400",
+  no_bid_dollars: "0.3400",
+  no_ask_dollars: "0.3800",
+  volume_fp: "50000.00",
+  volume_24h_fp: "1200.00",
+  status: "active",
   expiration_time: "2026-06-15T00:00:00Z",
   close_time: null,
 };
@@ -96,6 +96,20 @@ describe("normalizePolymarketMarket", () => {
     const result = normalizePolymarketMarket(polymarketFixture);
     expect(() => NormalizedMarketSchema.parse(result)).not.toThrow();
   });
+
+  it("throws with market ID on malformed outcomePrices", () => {
+    const bad = { ...polymarketFixture, outcomePrices: "not json" };
+    expect(() => normalizePolymarketMarket(bad)).toThrow(
+      /abc123.*malformed outcomePrices/
+    );
+  });
+
+  it("throws with market ID on malformed outcomes string", () => {
+    const bad = { ...polymarketFixture, outcomes: "{bad}" };
+    expect(() => normalizePolymarketMarket(bad)).toThrow(
+      /abc123.*malformed outcomes/
+    );
+  });
 });
 
 describe("normalizeKalshiMarket", () => {
@@ -119,7 +133,7 @@ describe("normalizeKalshiMarket", () => {
     expect(result.provider).toBe("kalshi");
   });
 
-  it("maps open status to active=true", () => {
+  it("maps active status to active=true", () => {
     expect(normalizeKalshiMarket(kalshiFixture).active).toBe(true);
     expect(
       normalizeKalshiMarket({ ...kalshiFixture, status: "closed" }).active
@@ -134,9 +148,26 @@ describe("normalizeKalshiMarket", () => {
   });
 
   it("clamps spread to non-negative", () => {
-    const invertedSpread = { ...kalshiFixture, yes_bid: 64, yes_ask: 60 };
+    const invertedSpread = {
+      ...kalshiFixture,
+      yes_bid_dollars: "0.6400",
+      yes_ask_dollars: "0.6000",
+    };
     const result = normalizeKalshiMarket(invertedSpread);
     expect(result.spreadBps).toBe(0);
+  });
+
+  it("produces deterministic updatedAt from raw fields", () => {
+    const a = normalizeKalshiMarket(kalshiFixture);
+    const b = normalizeKalshiMarket(kalshiFixture);
+    expect(a.updatedAt).toBe(b.updatedAt);
+    expect(a.updatedAt).toBe("2026-06-15T00:00:00Z"); // expiration_time
+  });
+
+  it("prefers close_time over expiration_time for updatedAt", () => {
+    const withClose = { ...kalshiFixture, close_time: "2026-06-10T00:00:00Z" };
+    const result = normalizeKalshiMarket(withClose);
+    expect(result.updatedAt).toBe("2026-06-10T00:00:00Z");
   });
 
   it("validates against NormalizedMarketSchema", () => {
