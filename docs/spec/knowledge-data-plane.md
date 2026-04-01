@@ -456,13 +456,12 @@ Each Cogni node has its own agent graphs package (domain logic) and its own know
 │  Published as: @cogni/knowledge-seeds or Doltgres remote    │
 │  Class: public/shared                                        │
 └──────────────────────────┬───────────────────────────────────┘
-                           │ seed (v0) / pull (v1)
-                           │ node decides when
+                           │ seed / pull (node decides when)
                            ▼
 ┌──────────────────────────────────────────────────────────────┐
 │  NODE-LOCAL SOVEREIGN KNOWLEDGE (per-node, isolated)         │
-│  Own Postgres DB (v0) / own Dolt database (v1)              │
-│  Base (pulled from operator) + private tuned knowledge      │
+│  Own Doltgres database (knowledge_{node_name})              │
+│  Base (seeded from operator) + private tuned knowledge      │
 │  Class: node-private (+ merged public/shared)                │
 └──────────────────────────┬───────────────────────────────────┘
                            │ KnowledgeStorePort
@@ -483,181 +482,95 @@ Each Cogni node has its own agent graphs package (domain logic) and its own know
 
 **Key separation:** The agent graphs package is **code** (the logic). The knowledge store is **data** (the expertise). The awareness plane is **operational data** (what's happening now). A node's graphs read strategies and prompts from its local knowledge store — they never import them as code constants.
 
-### v0: Knowledge Seeds (Postgres, zero new infra)
+### Shared Doltgres Server, Per-Node Databases
 
-The operator publishes a `@cogni/knowledge-seeds` package containing SQL seed files:
-
-```
-packages/knowledge-seeds/
-  src/
-    strategies/prediction-market.sql   ← base strategies for poly domain
-    strategies/infrastructure.sql      ← base strategies for infra domain
-    prompts/poly-synth.sql             ← system prompts for market analysis
-    evidence/base-refs.sql             ← evidence library
-    index.ts                           ← export seed paths for programmatic use
-```
-
-**At node provision** (`provisionNode` workflow):
-
-1. Node's Postgres database is created (existing step — already per-node isolated)
-2. Drizzle migrations create knowledge tables (from task.0231)
-3. Seed step runs: `pnpm knowledge:seed` imports base strategies + prompts
-4. Seeded rows are now node-private — the node owns them
-
-**Upstream updates:**
-
-- Operator bumps `@cogni/knowledge-seeds` version
-- Node decides when to pull: `pnpm upgrade @cogni/knowledge-seeds && pnpm knowledge:seed --upsert`
-- Seed script upserts new versions (existing rows untouched, new versions appended)
-- `UPGRADE_AUTONOMY` preserved — node is never forced to update
-
-**Node customization:**
-
-- Node adds its own rows via `KnowledgeStorePort.addStrategyVersion()` etc.
-- Custom strategies have `domain` matching the node's domain
-- Custom prompts are tuned for the node's specific use case
-- All node-written knowledge is **node-private** by default
-
-### v1: Shared Dolt Server, Per-Node Databases
-
-When the trigger conditions are met, knowledge migrates from Postgres to Dolt. One shared Dolt server operationally, but **per-node databases** — not branch-per-node, not one shared database.
-
-**One server, per-node databases:**
+One Doltgres server process. Each node gets its own database. Same pattern as Postgres (one server, `CREATE DATABASE` per node).
 
 ```
-┌─────────────────────────────────────────────────────────────┐
-│ Shared Dolt Server (operational — one process, shared infra) │
-│                                                             │
-│  knowledge_base          ← operator base knowledge          │
-│  (read-only for nodes)     upstream remote / seed source    │
-│                                                             │
-│  knowledge_poly          ← poly node's sovereign store      │
-│    main                    production knowledge             │
-│    └── experiment/         prompt experiments (node-only)   │
-│        prompt-v4                                            │
-│                                                             │
-│  knowledge_infra         ← infra node's sovereign store     │
-│    main                    production knowledge             │
-│    └── experiment/         threshold experiments (node-only) │
-│        lower-thresholds                                     │
-│                                                             │
-│  knowledge_commons       ← optional shared published repo   │
-│    (nodes explicitly promote validated knowledge here)      │
-└─────────────────────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────┐
+│ Shared Doltgres Server                                   │
+│                                                         │
+│  knowledge_operator    ← operator base knowledge         │
+│                          ships with node-template         │
+│                                                         │
+│  knowledge_poly        ← poly node's sovereign store     │
+│                          seeded from knowledge_operator   │
+│                                                         │
+│  knowledge_resy        ← resy node's sovereign store     │
+│                          seeded from knowledge_operator   │
+└─────────────────────────────────────────────────────────┘
 ```
 
-**Why per-node databases, not branches?**
+**Why per-node databases?**
 
-- **DATA_SOVEREIGNTY** — a node's database is its own. No other node can `USE` it without explicit access grants. Branch-per-node in a single database means any session can `dolt_checkout` any branch — sovereignty is advisory, not enforced.
-- **KNOWLEDGE_SOVEREIGN_BY_DEFAULT** — isolation is the default, sharing is explicit. Per-node databases make this structural, not policy-based.
-- **Self-hosted exit** — a node leaving the monorepo takes its Dolt database as a standalone repo. No branch extraction needed.
-- **Operational simplicity** — one Dolt server process, multiple databases. Same pattern as Postgres (one server, `CREATE DATABASE knowledge_{node_short_id}`).
+- **DATA_SOVEREIGNTY** — a node's database is its own. Isolation is structural, not policy.
+- **KNOWLEDGE_SOVEREIGN_BY_DEFAULT** — no default visibility across nodes.
+- **Self-hosted exit** — node takes its Doltgres database as a standalone repo with full commit history.
 
-**At node provision** (`provisionNode` workflow, enhanced):
+### Node Provision Flow
 
 1. Node's Postgres database created (awareness plane — existing step)
-2. Node's Dolt database created: `CREATE DATABASE knowledge_{node_short_id}`
-3. Operator base knowledge seeded into node's database (SQL import from `knowledge_base` or Dolt remote)
-4. `KnowledgeStorePort` adapter connects to `knowledge_{node_short_id}`
+2. Node's Doltgres knowledge database created: `CREATE DATABASE knowledge_{node_name}`
+3. Schema applied (same Drizzle DDL — Doltgres is Postgres-compatible)
+4. Base knowledge seeded from `knowledge_operator`
+5. Initial commit: `SELECT dolt_commit('-Am', 'seeded from knowledge_operator')`
+6. `KnowledgeStorePort` adapter connects to `knowledge_{node_name}`
 
-**Operator base as upstream remote:**
+### Node Customization
 
-```sql
--- Node pulls base knowledge updates from operator
-USE knowledge_poly;
-CALL dolt_remote('add', 'operator', 'dolthub/cogni-dao/knowledge-base');
-CALL dolt_pull('operator', 'main');
-CALL dolt_merge('operator/main');
-CALL dolt_commit('-m', 'pulled operator base knowledge update');
-```
-
-**Prompt experimentation** (branches within node's own database):
-
-```sql
-USE knowledge_poly;
-CALL dolt_branch('experiment/prompt-v4', 'main');
-CALL dolt_checkout('experiment/prompt-v4');
--- ... modify prompts, run evals ...
-CALL dolt_checkout('main');
-CALL dolt_merge('experiment/prompt-v4');
-CALL dolt_commit('-m', 'prompt v4 merged — 12% calibration improvement');
-```
-
-**Publishing to commons** (explicit promotion, not default):
-
-```sql
--- Node explicitly pushes validated knowledge to shared commons
-USE knowledge_poly;
-CALL dolt_remote('add', 'commons', 'dolthub/cogni-dao/knowledge-commons');
-CALL dolt_push('commons', 'main');
--- Operator reviews before merging into knowledge_base
-```
-
-**Self-hosted node exit path:** Node takes `knowledge_{node_short_id}` as a standalone Dolt repo. `dolt backup` or `dolt clone` to local instance. Fork freedom preserved — the node's entire knowledge history comes with it.
-
-### When to Trigger v1
-
-The concrete trigger for Dolt migration — **all three must hold:**
-
-1. **Multiple active nodes** — at least 2 nodes need to share/inherit knowledge
-2. **Active prompt experimentation** — version rows aren't sufficient; need branch-per-experiment
-3. **Proven v0 knowledge flow** — strategies and prompts are actually being read from the knowledge store (not hardcoded)
-
-Until then, Postgres + knowledge-seeds is simpler and sufficient. The `KnowledgeStorePort` makes the swap transparent to consumers.
+- Node adds rows via `KnowledgeStorePort.addStrategyVersion()` etc. — standard Drizzle writes
+- Custom strategies have `domain` matching the node's domain
+- After writes, node commits: `SELECT dolt_commit('-Am', 'added poly strategy v2')`
+- All node-written knowledge is **node-private** by default
 
 ### Pinning Analysis to Knowledge State
 
-Every analysis run in the awareness plane records which knowledge version it used:
-
-```
-analysis_runs.knowledge_version = "v7"        -- v0: version string
-analysis_runs.knowledge_version = "abc123def"  -- v1: Dolt commit hash
+```sql
+SELECT hashof('HEAD') as knowledge_commit;
+-- Store in analysis_runs.knowledge_commit for reproducibility
 ```
 
-This enables reproducibility: given the same observations + the same knowledge version, the analysis should produce the same signals.
+Given same observations + same knowledge commit → same analysis outputs.
+
+### Future: Branching, Remotes, Sharing
+
+Not in MVP. Once comfortable with single-branch commit/log/diff:
+
+- **Branching** — `SELECT dolt_checkout('-b', 'experiment/...')` for prompt experiments within a node's own database
+- **Remotes** — `SELECT dolt_push(...)` / `dolt_pull(...)` for cross-node knowledge sharing
+- **Commons** — optional shared Doltgres remote where nodes explicitly promote validated knowledge
 
 ---
 
 ## Invariants
 
-### Core (all phases)
-
-| Rule                            | Constraint                                                                                                                                                                                  |
-| ------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| AWARENESS_HOT_KNOWLEDGE_COLD    | Live operational data (observations, runs, signals, outcomes) stays in Postgres awareness tables. Curated expertise (strategies, prompts, evaluations, evidence) lives in knowledge tables. |
-| KNOWLEDGE_SOVEREIGN_BY_DEFAULT  | Node production knowledge is local and private by default. Cross-node sharing is explicit promotion, never default visibility. Monorepo code sharing does not imply knowledge sharing.      |
-| PROMOTE_NOT_MIRROR              | Knowledge is promoted from awareness via explicit gate. Only artifacts that are reviewed, repeated, or outcome-backed cross the boundary. Never bulk-copy.                                  |
-| PORT_BEFORE_BACKEND             | All knowledge access goes through `KnowledgeStorePort`. The adapter (Postgres or Dolt) is an implementation detail. Consumers never depend on the storage backend.                          |
-| SCHEMA_GENERIC_CONTENT_SPECIFIC | The knowledge schema is domain-agnostic. Domain specificity lives in row content (`domain` column, `params` JSONB), not in table structure.                                                 |
-| KNOWLEDGE_VERSION_PINNED        | Analysis runs should record their `knowledge_version`. Given same inputs + same knowledge state → same outputs.                                                                             |
-
-### v1-only invariants (deferred until Dolt migration)
-
-| Rule                     | Constraint                                                                                                                  |
-| ------------------------ | --------------------------------------------------------------------------------------------------------------------------- |
-| DOLT_PER_NODE_DATABASE   | Each node gets its own Dolt database (`knowledge_{node_short_id}`). Per-node databases, not branch-per-node in a shared DB. |
-| DOLT_OWNS_VERSIONING     | All knowledge versioning uses Dolt branches/commits. No manual version columns.                                             |
-| FORK_TAKES_KNOWLEDGE     | When a node leaves the monorepo (self-hosts), it takes its Dolt database as a standalone repo with full history.            |
-| SHARING_IS_EXPLICIT_PUSH | Knowledge enters the commons only via explicit `dolt push` to a shared remote. Never by default cohabitation.               |
+| Rule                            | Constraint                                                                                                                                                                  |
+| ------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| AWARENESS_HOT_KNOWLEDGE_COLD    | Live operational data stays in Postgres. Curated expertise lives in Doltgres.                                                                                               |
+| KNOWLEDGE_SOVEREIGN_BY_DEFAULT  | Node knowledge is local and private by default. Cross-node sharing is explicit promotion, never default visibility. Monorepo code sharing does not imply knowledge sharing. |
+| DOLTGRES_PER_NODE_DATABASE      | Each node gets its own Doltgres database (`knowledge_{node_name}`). Per-node databases, not shared tables or branch-per-node.                                               |
+| PROMOTE_NOT_MIRROR              | Knowledge is promoted from awareness via explicit gate. Only reviewed, repeated, or outcome-backed artifacts cross the boundary.                                            |
+| PORT_BEFORE_BACKEND             | All knowledge access goes through `KnowledgeStorePort`. Consumers use standard Drizzle queries.                                                                             |
+| SCHEMA_GENERIC_CONTENT_SPECIFIC | Domain specificity lives in row content (`domain`, `params` JSON), not table structure.                                                                                     |
+| KNOWLEDGE_VERSION_PINNED        | Analysis runs record `knowledge_commit` (Doltgres commit hash). Same inputs + same knowledge → same outputs.                                                                |
+| FORK_TAKES_KNOWLEDGE            | When a node self-hosts, it takes its Doltgres database with full commit history.                                                                                            |
 
 ---
 
 ## Non-Goals
 
 - Replacing Postgres for hot operational data (awareness plane stays where it is)
-- Real-time knowledge updates during analysis (knowledge is read at analysis start, not mid-flight)
+- Branching or remotes in MVP (future — get comfortable with commits first)
+- Real-time knowledge updates during analysis (read at start, not mid-flight)
 - Automatic promotion without any validation gate (human or statistical)
-- Embedding/vector search in the knowledge plane (stays in Postgres with pgvector if needed)
-- Dolt infrastructure in v0 (port abstraction defers this to v1)
+- Embedding/vector search in knowledge plane (stays in Postgres with pgvector if needed)
 
 ## Open Questions
 
-- [ ] Should `knowledge_claims` use the same `entity_id` namespace as `observation_events`? (Likely yes — same stable key, different storage)
-- [ ] Should `analysis_runs.knowledge_version` be added in v0 or deferred?
-- [ ] Should the promotion gate be a Temporal workflow or a simpler cron-based batch?
-- [ ] Dolt driver maturity for Node.js (v1 concern) — mysql2 works, but `dolt_checkout` / `dolt_merge` session semantics need verification through the driver
-- [ ] Dolt server resource footprint — acceptable alongside Postgres in shared cluster?
-- [ ] Branch naming convention — `node/{name}` vs `node/{short_id}`? Must be stable across renames.
+- [ ] Doltgres maturity: verify `dolt_commit`, `dolt_log`, `dolt_diff` work through standard `postgres` driver
+- [ ] Doltgres server resource footprint alongside Postgres in dev stack
+- [ ] Seed mechanism: SQL dump from `knowledge_operator` → `knowledge_{node}`, or Drizzle seeds?
+- [ ] Should the promotion gate be a Temporal workflow or a simpler batch?
 
 ## Related
 
