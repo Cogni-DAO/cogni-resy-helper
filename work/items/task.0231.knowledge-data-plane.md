@@ -1,13 +1,13 @@
 ---
 id: task.0231
 type: task
-title: "Knowledge Data Plane — Port, Schema, Drizzle Adapter, Poly Seeds"
+title: "Knowledge Data Plane — Doltgres Server, Schema, Adapter, Poly Seeds"
 status: needs_implement
 priority: 2
 rank: 1
-estimate: 3
-summary: "Scaffold packages/knowledge-store with KnowledgeStorePort, Drizzle-backed knowledge tables in db-schema/knowledge, and seed data for the first Polymarket strategy and prompt. Unblocks task.0227's poly-synth graph."
-outcome: "Analysis graphs read strategy + prompt content from a typed port instead of hardcoded strings. Knowledge tables exist in Postgres. Poly strategy seed data is queryable. Port abstraction enables future Dolt migration without consumer changes."
+estimate: 4
+summary: "Stand up Doltgres server in dev stack, create knowledge_operator + knowledge_poly databases, scaffold packages/knowledge-store with KnowledgeStorePort + Drizzle adapter, seed first Polymarket strategy and prompt. Doltgres is Postgres-compatible — same Drizzle schemas, same driver, adds commit/log/diff."
+outcome: "Analysis graphs read strategy + prompt content from a typed port backed by Doltgres. knowledge_operator has base knowledge. knowledge_poly has poly-specific seeds. dolt_commit + dolt_log work. Standard Drizzle queries for reads/writes."
 spec_refs:
   - knowledge-data-plane-spec
   - monitoring-engine-spec
@@ -18,21 +18,15 @@ created: 2026-03-31
 updated: 2026-04-01
 ---
 
-# Knowledge Data Plane — Port, Schema, Drizzle Adapter, Poly Seeds
+# Knowledge Data Plane — Doltgres Server, Schema, Adapter, Poly Seeds
 
 > Spec: [knowledge-data-plane](../../docs/spec/knowledge-data-plane.md) | Project: [proj.poly-prediction-bot](../projects/proj.poly-prediction-bot.md)
 
 ## Context
 
-The monitoring-engine spec defines an **awareness plane** (Postgres): observations, triggers, signals, outcomes — what the AI sees and decides right now.
+The knowledge-data-plane spec separates hot awareness (Postgres) from cold curated knowledge (Doltgres). Doltgres is a **Postgres-compatible drop-in** with native git-like versioning — same wire protocol, same Drizzle schemas, same `postgres` driver. The only additions are `dolt_commit()`, `dolt_log()`, `dolt_diff()` for versioning workflows.
 
-The knowledge-data-plane spec defines a **knowledge plane**: strategies, prompts, evaluations, evidence, playbooks, claims — what the AI has learned over time.
-
-Task.0227's `poly-synth` analysis graph needs to read strategy content and system prompts. Currently these would be hardcoded. This task gives them a proper home behind a typed port.
-
-### Relationship to prior knowledge-store work
-
-Branch `docs/spike-0137-knowledge-store` designed a Postgres-based knowledge store (entities, relations, observations). This task uses the same Postgres approach but with a **simpler schema** focused on strategy/prompt versioning (the immediate need), not entity resolution. The spec targets Dolt as the v1 backend — the port abstraction makes that a transparent adapter swap.
+Task.0227's poly-synth graph needs to read strategy + prompt content from a typed port instead of hardcoded strings. This task gives them a proper home in Doltgres with commit-based versioning.
 
 ---
 
@@ -44,23 +38,22 @@ Analysis graphs read strategy and prompt content from `KnowledgeStorePort` inste
 
 ### Approach
 
-**Solution**: Postgres knowledge tables behind a port abstraction, following existing Drizzle + db-schema patterns. One new capability package (`packages/knowledge-store/`), one new db-schema file (`packages/db-schema/src/knowledge.ts`).
+**Solution**: Doltgres server in docker-compose + knowledge tables via Drizzle + per-node databases (`knowledge_operator`, `knowledge_poly`). One new capability package (`packages/knowledge-store/`), one new db-schema file (`packages/db-schema/src/knowledge.ts`). Standard Drizzle for reads/writes, `dolt_commit()`/`dolt_log()` for versioning.
 
 **Reuses**:
 
-- Existing Postgres infrastructure (zero new services)
-- Existing Drizzle ORM + migration tooling
-- Existing `@cogni/db-client` factory pattern
-- Existing `@cogni/db-schema` slice pattern (same as attribution)
-- Existing testcontainer setup for Postgres
+- Existing Drizzle ORM + migration tooling (Doltgres is Postgres-compatible)
+- Existing `@cogni/db-schema` slice pattern (flat file, same as attribution.ts)
 - Existing capability package shape (port + domain + adapters)
+- Standard `postgres` driver (Doltgres speaks Postgres wire protocol)
 
 **Rejected**:
 
-- **Dolt from day 1** — adds second database engine (MySQL-compatible), second driver (mysql2), raw SQL migrations (no Drizzle), new testcontainer setup, new docker-compose service. None of these exist in the codebase today. The unique Dolt features (branching, fork inheritance, cross-node sharing) aren't exercised until Walk phase. Port abstraction means we can swap to Dolt later without changing consumers. (**REJECT_COMPLEXITY**)
+- **Plain Postgres** — loses native versioning. Manual `version` columns recreate what Doltgres gives natively. We've decided Doltgres is the backend.
+- **MySQL-compatible Dolt** — Doltgres exists now, so no need for mysql2 driver or separate SQL dialect.
 - **Knowledge tables in `db-schema/ingestion`** — knowledge is a different concern from awareness data. Wrong slice boundary.
-- **No knowledge store / hardcoded strategies** — creates tech debt in task.0227. Every domain pack would hardcode its own strategy+prompt content with no versioning.
-- **Full entity/relation/observation model (proj.knowledge-store)** — over-engineered for the immediate need. Strategy + prompt versioning is the 80/20. Entity resolution and claims layer are Walk concerns.
+- **No knowledge store / hardcoded strategies** — creates tech debt in task.0227.
+- **Full entity/relation/observation model** — over-engineered. Strategy + prompt versioning is the 80/20.
 
 ### Invariants
 
@@ -82,7 +75,7 @@ Analysis graphs read strategy and prompt content from `KnowledgeStorePort` inste
 - `packages/db-schema/src/knowledge.ts` — Drizzle table definitions (flat file, matches existing pattern: `attribution.ts`, `billing.ts`, etc.). Tables: `strategies`, `strategyVersions`, `strategyEvaluations`, `promptDefs`, `promptVersions`. (`playbooks`, `evidenceRefs`, `knowledgeClaims` deferred — no producer/consumer in Crawl)
 - `packages/knowledge-store/src/port/knowledge-store.port.ts` — `KnowledgeStorePort` interface
 - `packages/knowledge-store/src/domain/schemas.ts` — Zod schemas for knowledge types
-- `packages/knowledge-store/src/adapters/drizzle.adapter.ts` — `DrizzleKnowledgeStoreAdapter`
+- `packages/knowledge-store/src/adapters/doltgres.adapter.ts` — `DoltgresKnowledgeStoreAdapter` (Drizzle queries + dolt_commit/log/diff)
 - `packages/knowledge-store/src/index.ts` — barrel export (port + domain)
 - `packages/knowledge-store/package.json`, `tsconfig.json`, `tsup.config.ts`
 - `packages/knowledge-store/AGENTS.md`
@@ -90,11 +83,13 @@ Analysis graphs read strategy and prompt content from `KnowledgeStorePort` inste
 
 **Modify:**
 
+- `infra/compose/runtime/docker-compose.dev.yml` — add `doltgres` service (Postgres-compatible, port 5433)
 - `packages/db-schema/src/index.ts` — add knowledge slice re-export
 - `packages/db-schema/package.json` — add `@cogni/db-schema/knowledge` subpath export
 - `package.json` (root) — add `@cogni/knowledge-store` workspace dependency
 - `tsconfig.json` (root) — add reference
-- Drizzle migration — new tables
+- `.env.local.example` — add `DOLTGRES_URL` (Postgres DSN against Doltgres server)
+- Drizzle migration — new tables (runs against Doltgres, same DDL as Postgres)
 
 **Seed:**
 
@@ -105,43 +100,52 @@ Analysis graphs read strategy and prompt content from `KnowledgeStorePort` inste
 
 ## Deliverables
 
-### P0 — Schema + Package Scaffold (1.5 days)
+### P0 — Doltgres Infrastructure (1 day)
+
+| #   | Deliverable    | Description                                                                                         |
+| --- | -------------- | --------------------------------------------------------------------------------------------------- |
+| 1   | Docker Compose | `doltgres` service in docker-compose.dev.yml. Port 5433. Volume. Health check. Postgres-compatible. |
+| 2   | Init script    | Creates `knowledge_operator` + `knowledge_poly` databases. Idempotent.                              |
+| 3   | Env config     | `DOLTGRES_URL` in .env.local.example (Postgres DSN format)                                          |
+
+### P1 — Schema + Package (1.5 days)
 
 | #   | Deliverable          | Description                                                                                                                                                            |
 | --- | -------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 1   | Drizzle schema       | `packages/db-schema/src/knowledge.ts` — 5 tables (strategies, strategyVersions, strategyEvaluations, promptDefs, promptVersions). Flat file matching existing pattern. |
-| 2   | Subpath export       | `@cogni/db-schema/knowledge` subpath in package.json exports                                                                                                           |
-| 3   | Migration            | `pnpm db:generate` + `pnpm db:migrate` for new tables                                                                                                                  |
-| 4   | Package scaffold     | `packages/knowledge-store/` — package.json, tsconfig, tsup, AGENTS.md                                                                                                  |
-| 5   | Domain types + Zod   | Strategy, StrategyVersion, PromptDef, PromptVersion, StrategyEvaluation schemas                                                                                        |
-| 6   | `KnowledgeStorePort` | Read + write interface per spec                                                                                                                                        |
-| 7   | Root config          | Add workspace dep, tsconfig reference, biome override                                                                                                                  |
+| 4   | Drizzle schema       | `packages/db-schema/src/knowledge.ts` — 5 tables (strategies, strategyVersions, strategyEvaluations, promptDefs, promptVersions). Flat file matching existing pattern. |
+| 5   | Subpath export       | `@cogni/db-schema/knowledge` subpath in package.json exports                                                                                                           |
+| 6   | Migration            | Drizzle migration against Doltgres (same DDL as Postgres)                                                                                                              |
+| 7   | Package scaffold     | `packages/knowledge-store/` — package.json, tsconfig, tsup, AGENTS.md                                                                                                  |
+| 8   | Domain types + Zod   | Strategy, StrategyVersion, PromptDef, PromptVersion, StrategyEvaluation schemas                                                                                        |
+| 9   | `KnowledgeStorePort` | Read + write + commit/log interface per spec                                                                                                                           |
+| 10  | Root config          | Add workspace dep, tsconfig reference, biome override                                                                                                                  |
 
-### P1 — Adapter + Tests (1 day)
+### P2 — Adapter + Tests (1 day)
 
-| #   | Deliverable                    | Description                                                                                   |
-| --- | ------------------------------ | --------------------------------------------------------------------------------------------- |
-| 8   | `DrizzleKnowledgeStoreAdapter` | Implements `KnowledgeStorePort` using `@cogni/db-client`. Reads + writes all knowledge types. |
-| 9   | Unit tests                     | Schema validation (pure Zod), ID format tests                                                 |
-| 10  | Contract tests                 | Adapter against real Postgres (testcontainer or dev-stack)                                    |
+| #   | Deliverable                     | Description                                                                                            |
+| --- | ------------------------------- | ------------------------------------------------------------------------------------------------------ |
+| 11  | `DoltgresKnowledgeStoreAdapter` | Drizzle for reads/writes. `dolt_commit()`, `dolt_log()`, `currentCommit()` via raw SQL for versioning. |
+| 12  | Unit tests                      | Schema validation (pure Zod), ID format tests                                                          |
+| 13  | Adapter tests                   | Against dev-stack Doltgres: write → commit → log → verify commit hash                                  |
 
-### P2 — Seed Data (0.5 day)
+### P3 — Seed Data (0.5 day)
 
-| #   | Deliverable        | Description                                                         |
-| --- | ------------------ | ------------------------------------------------------------------- |
-| 11  | Poly strategy seed | "Calibrated Market Analyst" strategy + v1 version with params       |
-| 12  | Poly prompt seed   | `poly-synth-prompt` definition + v1 with initial system prompt text |
+| #   | Deliverable        | Description                                                                  |
+| --- | ------------------ | ---------------------------------------------------------------------------- |
+| 14  | Operator base seed | Base strategies + reference prompts into `knowledge_operator`, committed     |
+| 15  | Poly seed          | "Calibrated Market Analyst" + `poly-synth-prompt` v1 into `knowledge_poly`   |
+| 16  | Seed script        | `pnpm knowledge:seed` — applies seeds, commits each with descriptive message |
 
 ## Acceptance Criteria
 
+- [ ] `pnpm dev:stack` starts Doltgres alongside Postgres; both healthy
 - [ ] `pnpm check` passes (lint + type + format)
-- [ ] `pnpm packages:build` builds knowledge-store successfully
-- [ ] `pnpm test` — schema validation unit tests pass
-- [ ] `pnpm test:component` — contract tests pass against Postgres
-- [ ] Can read seed strategy + prompt via `KnowledgeStorePort`
-- [ ] Can write a new strategy version via port
+- [ ] `packages/knowledge-store/` builds and exports port + domain types
+- [ ] Can read seed strategy + prompt from `knowledge_poly` via `KnowledgeStorePort`
+- [ ] Can write a new strategy version + `commit()` — visible in `log()`
+- [ ] `knowledge_operator` and `knowledge_poly` are separate databases
+- [ ] Drizzle migration applies cleanly to Doltgres
 - [ ] AGENTS.md documented for new package
-- [ ] Drizzle migration applies cleanly
 
 ## Validation
 
@@ -149,16 +153,22 @@ Analysis graphs read strategy and prompt content from `KnowledgeStorePort` inste
 pnpm check                    # lint + type + format
 pnpm packages:build           # builds knowledge-store
 pnpm test                     # unit tests (Zod schemas)
-pnpm test:component           # contract tests (vs Postgres testcontainer)
-pnpm dev:stack                # tables exist, seeds queryable
+pnpm dev:stack                # Doltgres + Postgres both healthy, seeds queryable
 ```
+
+## Risks
+
+| Risk                                         | Mitigation                                                                                  |
+| -------------------------------------------- | ------------------------------------------------------------------------------------------- |
+| Doltgres Drizzle compatibility               | Verify Drizzle migrations and queries work against Doltgres. Spike early in P1.             |
+| `dolt_commit`/`dolt_log` via postgres driver | These are Dolt-specific SQL functions. Verify they work through standard `postgres` driver. |
+| Dev stack startup order                      | Doltgres health check + `depends_on` in compose. Same pattern as postgres service.          |
 
 ## Out of Scope
 
-- Dolt infrastructure (v1, separate task when branching/forking needed)
+- Dolt branching (future — MVP is single-branch `main`)
+- Dolt remotes / push-pull between nodes (future)
 - Full awareness pipeline (task.0227)
-- Automatic promotion gate (manual promotion only)
-- pgvector / semantic search
-- Multi-node knowledge sharing
+- Automatic promotion gate
 - UI for knowledge browsing
-- `analysis_runs.knowledge_version` column (added when task.0227 wires analysis runs)
+- `analysis_runs.knowledge_commit` column (added when task.0227 wires analysis)
