@@ -6,8 +6,8 @@ status: needs_implement
 priority: 2
 rank: 1
 estimate: 4
-summary: "Stand up Doltgres server in dev stack, create knowledge_operator + knowledge_poly databases, scaffold packages/knowledge-store with KnowledgeStorePort + Drizzle adapter, seed first Polymarket strategy and prompt. Doltgres is Postgres-compatible — same Drizzle schemas, same driver, adds commit/log/diff."
-outcome: "Analysis graphs read strategy + prompt content from a typed port backed by Doltgres. knowledge_operator has base knowledge. knowledge_poly has poly-specific seeds. dolt_commit + dolt_log work. Standard Drizzle queries for reads/writes."
+summary: "Stand up Doltgres server in dev stack, create knowledge_operator + knowledge_poly databases, scaffold packages/knowledge-store with KnowledgeStorePort + Drizzle adapter, seed domain-specific knowledge. Doltgres is Postgres-compatible — same Drizzle schemas, same driver, adds commit/log/diff."
+outcome: "Agents read domain knowledge from a typed port backed by Doltgres. knowledge_operator has base knowledge. knowledge_poly has poly-specific seeds. dolt_commit + dolt_log work. Standard Drizzle queries for reads/writes."
 spec_refs:
   - knowledge-data-plane-spec
   - monitoring-engine-spec
@@ -72,7 +72,7 @@ Analysis graphs read strategy and prompt content from `KnowledgeStorePort` inste
 
 **Create:**
 
-- `packages/db-schema/src/knowledge.ts` — Drizzle table definitions (flat file, matches existing pattern: `attribution.ts`, `billing.ts`, etc.). Tables: `strategies`, `strategyVersions`, `strategyEvaluations`, `promptDefs`, `promptVersions`. (`playbooks`, `evidenceRefs`, `knowledgeClaims` deferred — no producer/consumer in Crawl)
+- `packages/db-schema/src/knowledge.ts` — Drizzle table definition (flat file, matches existing pattern: `attribution.ts`, `billing.ts`, etc.). MVP table: `knowledge` (domain-specific facts/claims). Strategy + prompt tables added in Walk/Run phases.
 - `packages/knowledge-store/src/port/knowledge-store.port.ts` — `KnowledgeStorePort` interface
 - `packages/knowledge-store/src/domain/schemas.ts` — Zod schemas for knowledge types
 - `packages/knowledge-store/src/adapters/doltgres.adapter.ts` — `DoltgresKnowledgeStoreAdapter` (Drizzle queries + dolt_commit/log/diff)
@@ -110,15 +110,15 @@ Analysis graphs read strategy and prompt content from `KnowledgeStorePort` inste
 
 ### P1 — Schema + Package (1.5 days)
 
-| #   | Deliverable          | Description                                                                                                                                                            |
-| --- | -------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 4   | Drizzle schema       | `packages/db-schema/src/knowledge.ts` — 5 tables (strategies, strategyVersions, strategyEvaluations, promptDefs, promptVersions). Flat file matching existing pattern. |
-| 5   | Subpath export       | `@cogni/db-schema/knowledge` subpath in package.json exports                                                                                                           |
-| 6   | Migration            | Drizzle migration against Doltgres (same DDL as Postgres)                                                                                                              |
-| 7   | Package scaffold     | `packages/knowledge-store/` — package.json, tsconfig, tsup, AGENTS.md                                                                                                  |
-| 8   | Domain types + Zod   | Strategy, StrategyVersion, PromptDef, PromptVersion, StrategyEvaluation schemas                                                                                        |
-| 9   | `KnowledgeStorePort` | Read + write + commit/log interface per spec                                                                                                                           |
-| 10  | Root config          | Add workspace dep, tsconfig reference, biome override                                                                                                                  |
+| #   | Deliverable          | Description                                                                                                                                                         |
+| --- | -------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 4   | Drizzle schema       | `packages/db-schema/src/knowledge.ts` — `knowledge` table (domain facts/claims). Flat file matching existing pattern. Strategy/prompt tables added in later phases. |
+| 5   | Subpath export       | `@cogni/db-schema/knowledge` subpath in package.json exports                                                                                                        |
+| 6   | Migration            | Drizzle migration against Doltgres (same DDL as Postgres)                                                                                                           |
+| 7   | Package scaffold     | `packages/knowledge-store/` — package.json, tsconfig, tsup, AGENTS.md                                                                                               |
+| 8   | Domain types + Zod   | Knowledge, NewKnowledge schemas                                                                                                                                     |
+| 9   | `KnowledgeStorePort` | Read + write + commit/log interface per spec                                                                                                                        |
+| 10  | Root config          | Add workspace dep, tsconfig reference, biome override                                                                                                               |
 
 ### P2 — Adapter + Tests (1 day)
 
@@ -130,19 +130,19 @@ Analysis graphs read strategy and prompt content from `KnowledgeStorePort` inste
 
 ### P3 — Seed Data (0.5 day)
 
-| #   | Deliverable        | Description                                                                  |
-| --- | ------------------ | ---------------------------------------------------------------------------- |
-| 14  | Operator base seed | Base strategies + reference prompts into `knowledge_operator`, committed     |
-| 15  | Poly seed          | "Calibrated Market Analyst" + `poly-synth-prompt` v1 into `knowledge_poly`   |
-| 16  | Seed script        | `pnpm knowledge:seed` — applies seeds, commits each with descriptive message |
+| #   | Deliverable        | Description                                                                        |
+| --- | ------------------ | ---------------------------------------------------------------------------------- |
+| 14  | Operator base seed | Base domain knowledge into `knowledge_operator`, committed                         |
+| 15  | Poly seed          | Poly-specific domain knowledge (market patterns, base rates) into `knowledge_poly` |
+| 16  | Seed script        | `pnpm knowledge:seed` — applies seeds, commits each with descriptive message       |
 
 ## Acceptance Criteria
 
 - [ ] `pnpm dev:stack` starts Doltgres alongside Postgres; both healthy
 - [ ] `pnpm check` passes (lint + type + format)
 - [ ] `packages/knowledge-store/` builds and exports port + domain types
-- [ ] Can read seed strategy + prompt from `knowledge_poly` via `KnowledgeStorePort`
-- [ ] Can write a new strategy version + `commit()` — visible in `log()`
+- [ ] Can read seed knowledge from `knowledge_poly` via `KnowledgeStorePort`
+- [ ] Can write new knowledge + `commit()` — visible in `log()`
 - [ ] `knowledge_operator` and `knowledge_poly` are separate databases
 - [ ] Drizzle migration applies cleanly to Doltgres
 - [ ] AGENTS.md documented for new package
