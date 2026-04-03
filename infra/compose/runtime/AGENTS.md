@@ -36,6 +36,7 @@ Production runtime configuration directory copied to VM hosts for container orch
 - **Exports:** none
 - **CLI (if any):** docker-compose commands
 - **Env/Config keys:** `APP_IMAGE`, `MIGRATOR_IMAGE`, `APP_ENV`, `DEPLOY_ENVIRONMENT`, `COGNI_REPO_URL` (git-sync), `COGNI_REPO_REF` (git-sync, pinned SHA), `GIT_READ_USERNAME` (git-sync), `GIT_READ_TOKEN` (git-sync, Contents:Read PAT), `COGNI_REPO_PATH` (app, `/repo/current`), `COGNI_REPO_SHA` (app), `POSTGRES_ROOT_USER`, `POSTGRES_ROOT_PASSWORD`, `APP_DB_USER`, `APP_DB_PASSWORD`, `APP_DB_SERVICE_USER`, `APP_DB_SERVICE_PASSWORD`, `APP_DB_NAME`, `DATABASE_URL` (explicit DSN, app_user), `DATABASE_SERVICE_URL` (explicit DSN, app_service), `APP_BASE_URL`, `NEXTAUTH_URL`, `AUTH_SECRET`, `LITELLM_MASTER_KEY`, `OPENROUTER_API_KEY`, `LITELLM_DATABASE_URL`, `LANGFUSE_PUBLIC_KEY`, `LANGFUSE_SECRET_KEY`, `LANGFUSE_BASE_URL`, `LANGFUSE_TRACING_ENVIRONMENT` (derived from DEPLOY_ENVIRONMENT), `GRAFANA_CLOUD_LOKI_URL`, `GRAFANA_CLOUD_LOKI_USER`, `GRAFANA_CLOUD_LOKI_API_KEY`, `METRICS_TOKEN` (app+alloy), `BILLING_INGEST_TOKEN` (app+litellm, callback auth), `INTERNAL_OPS_TOKEN` (app internal ops auth), `GENERIC_LOGGER_ENDPOINT` (litellm), `GENERIC_LOGGER_HEADERS` (litellm), `PROMETHEUS_REMOTE_WRITE_URL` (alloy), `PROMETHEUS_USERNAME` (alloy), `PROMETHEUS_PASSWORD` (alloy), `TEMPORAL_ADDRESS`, `TEMPORAL_NAMESPACE`, `TEMPORAL_TASK_QUEUE`, `TEMPORAL_DB_USER`, `TEMPORAL_DB_PASSWORD`, `TEMPORAL_DB_HOST`, `TEMPORAL_DB_PORT`
+  Optional local host-port overrides for `docker-compose.dev.yml`: `POSTGRES_HOST_PORT`, `LITELLM_HOST_PORT`, `LOKI_HOST_PORT`, `GRAFANA_HOST_PORT`, `ALLOY_HOST_PORT`, `TEMPORAL_HOST_PORT`, `TEMPORAL_UI_HOST_PORT`, `SCHEDULER_WORKER_HOST_PORT`, `OPENCLAW_GATEWAY_HOST_PORT`, `TIGERBEETLE_HOST_PORT`, `CADDY_HTTP_PORT`, `CADDY_HTTPS_PORT`
 - **Files considered API:** `docker-compose.yml`, `postgres-init/*.sh`, `configs/alloy-config.alloy`, `sandbox-proxy/nginx-gateway.conf.template`, `openclaw/openclaw-gateway.json`
 
 ## Responsibilities
@@ -80,6 +81,7 @@ docker compose --project-name cogni-runtime logs -f app
 - **HIGHLY PROTECTED**: This directory is rsync'd to production VMs
 - **Edge split**: TLS termination (Caddy) is in separate `../edge/` project to prevent ERR_CONNECTION_RESET during deploys
 - **Shared network**: Runtime and edge share `cogni-edge` external network for service DNS resolution
+- Local helper scripts use separate compose project names for dev vs test stacks so both can run without container-name collisions
 - Database security uses two-user model (root + app credentials)
 - Init scripts run only on first postgres container startup
 - `NEXTAUTH_URL` env var provided with shell fallback to `APP_BASE_URL`; Auth.js uses `trustHost: true` (safe behind Caddy)

@@ -11,7 +11,6 @@ services:
     build:
       context: ../../..
       dockerfile: ./apps/web/Dockerfile
-    container_name: app
     restart: always
     networks:
       - cogni-edge
@@ -70,7 +69,7 @@ services:
       - LANGFUSE_TRACING_ENVIRONMENT=${DEPLOY_ENVIRONMENT:-local}
       # TigerBeetle (Financial Ledger) — optional, native client requires IP (no DNS).
       # Static IP assigned via ipam on internal network.
-      - TIGERBEETLE_ADDRESS=10.100.0.100:3002
+      - TIGERBEETLE_ADDRESS=${TIGERBEETLE_ADDRESS_OVERRIDE:-10.100.0.100:3002}
       # Privy (Operator Wallet) — optional, silently skipped if missing
       - PRIVY_APP_ID
       - PRIVY_APP_SECRET
@@ -114,7 +113,6 @@ services:
   # =============================================================================
   autoheal:
     image: willfarrell/autoheal@sha256:babbdf5d586b8e2708db827893a228e542b7cbd3b61ee698ba172a67b725c7dd
-    container_name: autoheal
     restart: always
     network_mode: "none"
     read_only: true
@@ -135,7 +133,6 @@ services:
 
   litellm:
     image: ghcr.io/berriai/litellm@sha256:7e7816d58c265c182be5f3568ed8e5d999f11a5deda1d85e8e347a18bc578f64
-    container_name: litellm
     restart: unless-stopped
     labels:
       - "autoheal=true"
@@ -143,7 +140,7 @@ services:
       - cogni-edge
       - sandbox-internal # P0.5a: Allow sandbox containers to reach LiteLLM
     ports:
-      - "4000:4000"
+      - "${LITELLM_HOST_PORT:-4000}:4000"
     environment:
       - OPENROUTER_API_KEY=${OPENROUTER_API_KEY}
       - LITELLM_MASTER_KEY=${LITELLM_MASTER_KEY}
@@ -172,7 +169,6 @@ services:
 
   mock-llm:
     image: zerob13/mock-openai-api:latest
-    container_name: mock-llm
     labels:
       - "autoheal=true"
     networks:
@@ -185,13 +181,12 @@ services:
 
   caddy:
     image: caddy:2
-    container_name: caddy
     restart: always
     networks:
       - cogni-edge
     ports:
-      - "80:80"
-      - "443:443"
+      - "${CADDY_HTTP_PORT:-80}:80"
+      - "${CADDY_HTTPS_PORT:-443}:443"
     environment:
       - DOMAIN=${DOMAIN}
     volumes:
@@ -204,7 +199,6 @@ services:
 
   postgres:
     image: postgres:15
-    container_name: postgres
     restart: unless-stopped
     labels:
       - "autoheal=true"
@@ -216,7 +210,7 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_ROOT_PASSWORD}
       LITELLM_DB_NAME: litellm_dev
     ports:
-      - "55432:5432"
+      - "${POSTGRES_HOST_PORT:-55432}:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     command:
@@ -238,7 +232,6 @@ services:
 
   db-provision:
     image: postgres:15
-    container_name: db-provision
     profiles:
       - bootstrap
     restart: "no"
@@ -268,7 +261,6 @@ services:
       context: ../../..
       dockerfile: ./apps/web/Dockerfile
       target: migrator
-    container_name: db-migrate
     profiles:
       - bootstrap
     restart: "no"
@@ -283,7 +275,6 @@ services:
 
   repo-init:
     image: busybox
-    container_name: repo-init
     user: "0:0"
     command: ["sh", "-c", "chown -R 1001:1001 /repo"]
     volumes:
@@ -292,7 +283,6 @@ services:
 
   git-sync:
     image: registry.k8s.io/git-sync/git-sync:v4.4.0
-    container_name: git-sync
     # Must match app's nextjs UID:GID (1001:1001 from Dockerfile)
     # so the repo volume ownership aligns — git 2.35.2+ rejects cross-user repos
     user: "1001:1001"
@@ -314,24 +304,22 @@ services:
 
   loki:
     image: grafana/loki:2.9.10
-    container_name: loki
     restart: unless-stopped
     networks:
       - cogni-edge
     ports:
-      - "127.0.0.1:3100:3100"
+      - "127.0.0.1:${LOKI_HOST_PORT:-3100}:3100"
     command: -config.file=/etc/loki/local-config.yaml
     volumes:
       - loki_data:/loki
 
   grafana:
     image: grafana/grafana:11.3.0
-    container_name: grafana
     restart: unless-stopped
     networks:
       - cogni-edge
     ports:
-      - "127.0.0.1:3001:3000"
+      - "127.0.0.1:${GRAFANA_HOST_PORT:-3001}:3000"
     volumes:
       - ./configs/grafana-provisioning:/etc/grafana/provisioning:ro
       - grafana_data:/var/lib/grafana
@@ -343,12 +331,11 @@ services:
 
   alloy:
     image: grafana/alloy:v1.9.2
-    container_name: alloy
     restart: unless-stopped
     networks:
       - cogni-edge
     ports:
-      - "127.0.0.1:12345:12345"
+      - "127.0.0.1:${ALLOY_HOST_PORT:-12345}:12345"
     volumes:
       - ./configs/alloy-config.alloy:/etc/alloy/config.alloy:ro
       - alloy_data:/var/lib/alloy
@@ -390,7 +377,6 @@ services:
     # Dedicated Postgres for Temporal (not shared with app DB)
     # Aligned to postgres:15 for MVP consistency with app DB
     image: postgres:15
-    container_name: temporal-postgres
     restart: unless-stopped
     labels:
       - "autoheal=true"
@@ -412,14 +398,13 @@ services:
     # Temporal server with auto-setup (handles schema migrations)
     # Pinned version from temporalio/docker-compose v1.29.1
     image: temporalio/auto-setup:1.29.1
-    container_name: temporal
     restart: unless-stopped
     labels:
       - "autoheal=true"
     networks:
       - internal
     ports:
-      - "127.0.0.1:7233:7233"
+      - "127.0.0.1:${TEMPORAL_HOST_PORT:-7233}:7233"
     environment:
       # Temporal DB config (auto-setup env vars)
       - DB=postgres12
@@ -450,12 +435,11 @@ services:
     # Temporal Web UI for debugging schedules and workflows
     # Pinned version from temporalio/docker-compose v1.29.1
     image: temporalio/ui:2.34.0
-    container_name: temporal-ui
     restart: unless-stopped
     networks:
       - internal
     ports:
-      - "127.0.0.1:8233:8080"
+      - "127.0.0.1:${TEMPORAL_UI_HOST_PORT:-8233}:8080"
     environment:
       - TEMPORAL_ADDRESS=temporal:7233
       - TEMPORAL_CORS_ORIGINS=http://localhost:3000
@@ -473,7 +457,6 @@ services:
     build:
       context: ../../..
       dockerfile: services/scheduler-worker/Dockerfile
-    container_name: scheduler-worker
     restart: unless-stopped
     labels:
       - "autoheal=true"
@@ -481,7 +464,7 @@ services:
       - internal
       - cogni-edge
     ports:
-      - "127.0.0.1:9001:9000" # Health endpoint for stack test wait-for-probes
+      - "127.0.0.1:${SCHEDULER_WORKER_HOST_PORT:-9001}:9000" # Health endpoint for stack test wait-for-probes
     environment:
       # Temporal connection
       - TEMPORAL_ADDRESS=temporal:7233
@@ -532,7 +515,6 @@ services:
 
   llm-proxy-openclaw:
     image: nginx:alpine
-    container_name: llm-proxy-openclaw
     profiles: [sandbox-openclaw]
     restart: unless-stopped
     labels:
@@ -557,7 +539,6 @@ services:
 
   openclaw-gateway:
     image: cogni-sandbox-openclaw:latest
-    container_name: openclaw-gateway
     profiles: [sandbox-openclaw]
     restart: unless-stopped
     labels:
@@ -567,7 +548,7 @@ services:
       - cogni-edge # internet egress for curl, gh, web search
       - internal # needed for host port binding (internal:true blocks port publish)
     ports:
-      - "127.0.0.1:3333:18789"
+      - "127.0.0.1:${OPENCLAW_GATEWAY_HOST_PORT:-3333}:18789"
     entrypoint:
       [
         "sh",
@@ -634,7 +615,6 @@ services:
 
   tigerbeetle:
     image: ghcr.io/tigerbeetle/tigerbeetle:0.16.76
-    container_name: tigerbeetle
     restart: unless-stopped
     cap_add:
       - IPC_LOCK
@@ -644,9 +624,9 @@ services:
       - "autoheal=true"
     networks:
       internal:
-        ipv4_address: 10.100.0.100
+        ipv4_address: ${TIGERBEETLE_INTERNAL_IP:-10.100.0.100}
     ports:
-      - "127.0.0.1:3002:3002"
+      - "127.0.0.1:${TIGERBEETLE_HOST_PORT:-3002}:3002"
     entrypoint:
       - "sh"
       - "-c"
@@ -667,38 +647,25 @@ services:
 
 networks:
   cogni-edge:
-    name: cogni-edge
+    name: ${COGNI_EDGE_NETWORK_NAME:-cogni-edge}
     external: true
   internal:
-    name: internal
     external: false
     ipam:
       config:
-        - subnet: 10.100.0.0/24
+        - subnet: ${INTERNAL_NETWORK_SUBNET:-10.100.0.0/24}
   sandbox-internal:
-    name: sandbox-internal
     internal: true # KEY: No external gateway - prevents internet egress
 
 volumes:
   caddy_data:
-    name: caddy_data
   caddy_config:
-    name: caddy_config
   postgres_data:
-    name: postgres_data
   alloy_data:
-    name: alloy_data
   loki_data:
-    name: loki_data
   grafana_data:
-    name: grafana_data
   temporal_postgres_data:
-    name: temporal_postgres_data
   repo_data:
-    name: repo_data
   pnpm_store:
-    name: pnpm_store
   tigerbeetle_data:
-    name: tigerbeetle_data
   cogni_workspace:
-    name: cogni_workspace

@@ -141,17 +141,17 @@ export CHECK_FULL_MODE=true
 log_step "1/5" "Pre-flight checks..."
 
 set +e  # Don't fail fast for port checks
-if ! check_port 55432; then
-  log_error "Port 55432 already in use (test postgres). Run: pnpm docker:test:stack:down"
+if ! check_port 55433; then
+  log_error "Port 55433 already in use (test postgres). Run: pnpm docker:test:stack:down"
   exit 1
 fi
-echo "  ✓ Port 55432 available"
+echo "  ✓ Port 55433 available"
 
-if ! check_port 4000; then
-  log_error "Port 4000 already in use (litellm). Run: pnpm docker:test:stack:down"
+if ! check_port 14000; then
+  log_error "Port 14000 already in use (test litellm). Run: pnpm docker:test:stack:down"
   exit 1
 fi
-echo "  ✓ Port 4000 available"
+echo "  ✓ Port 14000 available"
 set -e  # Re-enable fail fast
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
